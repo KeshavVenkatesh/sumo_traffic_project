@@ -1,0 +1,17 @@
+***Starting server on port 58027 ***
+Loading net-file from '/Users/keshav/Downloads/sumo_traffic_project/new_map.net.xml' ... done (259ms).
+Loading route-files incrementally from '/Users/keshav/Downloads/sumo_traffic_project/background_new.rou.xml'
+Loading route-files incrementally from '/Users/keshav/Downloads/sumo_traffic_project/ambulance_random_new.rou.xml'
+Loading done.
+Simulation version 1.26.0 started with time: 0.00.
+Simulation ended at time: 0.00.
+Reason: TraCI requested termination.
+Performance:
+ Duration: 0.01s
+ TraCI-Duration: 0.00s
+ Real time factor: 0
+ UPS: 0.000000
+Vehicles:
+ Inserted: 0 (Loaded: 2)
+ Running: 0
+ Waiting: 0

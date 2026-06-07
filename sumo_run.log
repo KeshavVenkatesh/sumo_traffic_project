@@ -1,0 +1,68 @@
+***Starting server on port 61986 ***
+Loading net-file from '/Users/keshav/Downloads/map.net.xml' ... done (412ms).
+Loading route-files incrementally from '/Users/keshav/Downloads/background.rou.xml'
+Loading route-files incrementally from '/Users/keshav/Downloads/ambulance_random.rou.xml'
+Loading done.
+Simulation started with time: 0.00.
+Warning: Vehicle 'car_230' performs emergency braking on lane ':cluster_53026794_6551985106_6551985108_6551985110_#7more_5_2' with decel=9.00, wished=4.50, severity=1.00, time=241.00.
+Warning: Vehicle 'car_110' performs emergency braking on lane ':cluster_53026794_6551985106_6551985108_6551985110_#7more_5_2' with decel=9.00, wished=4.50, severity=1.00, time=241.00.
+Warning: Teleporting vehicle 'ambulance_8'; junction collision with vehicle 'car_452', lane=':4178720990_1_0', gap=-9.00, time=667.00, stage=move.
+Warning: Vehicle 'ambulance_8' ends teleporting on edge '417310798', time=674.00.
+Warning: Teleporting vehicle 'car_464'; waited too long (jam), lane='-1006582015#6_0', time=711.00.
+Warning: Vehicle 'car_464' ends teleporting on edge '-1006582015#4', time=711.00.
+Warning: Teleporting vehicle 'car_332'; waited too long (jam), lane=':1080479053_1_0', time=717.00.
+Warning: Vehicle 'car_332' ends teleporting on edge '417307861#0', time=717.00.
+Warning: Teleporting vehicle 'ambulance_8'; junction collision with vehicle 'car_617', lane=':4178697030_0_0', gap=-7.77, time=769.00, stage=move.
+Warning: Teleporting vehicle 'car_643'; waited too long (jam), lane='-1449585284#2_0', time=773.00.
+Warning: Vehicle 'car_643' ends teleporting on edge '-1449585284#1', time=773.00.
+Warning: Teleporting vehicle 'car_776'; waited too long (yield), lane='-6332531#0_0', time=807.00.
+Warning: Teleporting vehicle 'car_819'; waited too long (yield), lane='6338585#1_0', time=809.00.
+Warning: Vehicle 'ambulance_8' ends teleporting on edge '417307893#2', time=829.00.
+Warning: Vehicle 'car_819' ends teleporting on edge '-1006582015#1', time=868.00.
+Warning: Vehicle 'car_776' ends teleporting on edge '-1449585284#1', time=872.00.
+Warning: Teleporting vehicle 'car_1037'; waited too long (jam), lane='6407444#5_0', time=959.00.
+Warning: Teleporting vehicle 'car_1028'; waited too long (yield), lane='6407444#6_0', time=959.00.
+Warning: Vehicle 'car_1037' ends teleporting on edge '6407444#6', time=959.00.
+Warning: Teleporting vehicle 'ambulance_10'; waited too long (yield), lane='-6336610#0_0', time=980.00.
+Warning: Teleporting vehicle 'car_1029'; waited too long (jam), lane='-429277534#1_0', time=989.00.
+Warning: Teleporting vehicle 'car_902'; waited too long (yield), lane='-6342516#1_0', time=1001.00.
+Warning: Teleporting vehicle 'car_530'; waited too long (jam), lane='-1006582013_0', time=1019.00.
+Warning: Teleporting vehicle 'car_342'; waited too long (yield), lane='417307876#3_4', time=1023.00.
+Warning: Teleporting vehicle 'car_464'; waited too long (jam), lane=':1080479053_3_0', time=1025.00.
+Warning: Vehicle 'car_342' ends teleporting on edge '-1006582015#1', time=1026.00.
+Warning: Vehicle 'car_464' ends teleporting on edge '-1006582015#1', time=1027.00.
+Warning: Vehicle 'car_530' ends teleporting on edge '-1006582015#6', time=1029.00.
+Warning: Vehicle 'car_1028' ends teleporting on edge '-1449585284#1', time=1038.00.
+Warning: Teleporting vehicle 'car_215'; waited too long (yield), lane='417307895#1_0', time=1049.00.
+Warning: Vehicle 'car_902' ends teleporting on edge '-1449624716#0', time=1053.00.
+Warning: Vehicle 'car_1029' ends teleporting on edge '-1449585284#7', time=1058.00.
+Warning: Teleporting vehicle 'car_1120'; waited too long (jam), lane=':1080494809_4_0', time=1069.00.
+Warning: Vehicle 'car_1120' ends teleporting on edge '417307883#0', time=1069.00.
+Warning: Vehicle 'car_215' teleports beyond arrival edge '1006582015#2', time=1098.00.
+Warning: Teleporting vehicle 'car_1135'; waited too long (wrong lane), lane='93206018_0', time=1111.00.
+Warning: Teleporting vehicle 'car_860'; waited too long (yield), lane='6338585#1_0', time=1113.00.
+Warning: Teleporting vehicle 'car_700'; waited too long (jam), lane='1449584627#4_0', time=1114.00.
+Warning: Teleporting vehicle 'car_496'; waited too long (yield), lane='1449624716#1_0', time=1124.00.
+Warning: Teleporting vehicle 'ambulance_11'; junction collision with vehicle 'car_723', lane=':4178697031_0_0', gap=-7.78, time=1127.00, stage=move.
+Warning: Teleporting vehicle 'car_814'; waited too long (jam), lane='417307862_0', time=1148.00.
+Warning: Vehicle 'car_496' ends teleporting on edge '-677362510', time=1158.00.
+Warning: Vehicle 'car_700' ends teleporting on edge '417307883#0', time=1165.00.
+Warning: Vehicle 'car_860' ends teleporting on edge '-1006582015#1', time=1172.00.
+Warning: Teleporting vehicle 'car_641'; waited too long (jam), lane='417307873#0_0', time=1212.00.
+Warning: Vehicle 'car_1135' ends teleporting on edge '-724037294#3', time=1214.00.
+Warning: Teleporting vehicle 'car_1527'; waited too long (yield), lane='-6343839_0', time=1224.00.
+Warning: Vehicle 'ambulance_10' ends teleporting on edge '-1449585284#1', time=1245.00.
+Warning: Teleporting vehicle 'car_1100'; waited too long (yield), lane='-6336610#0_0', time=1285.00.
+Warning: Vehicle 'ambulance_11' ends teleporting on edge '417310780#1', time=1288.00.
+Simulation ended at time: 1295.00.
+Performance:
+ Duration: 2146.03s
+ TraCI-Duration: 62.10s
+ Real time factor: 0.60344
+ UPS: 373.832494
+Vehicles:
+ Inserted: 1968 (Loaded: 2162)
+ Running: 1112
+ Waiting: 3
+ Teleports: 26 (Collisions: 3, Jam: 11, Yield: 11, Wrong Lane: 1)
+ Emergency Braking: 2
