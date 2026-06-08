@@ -1,0 +1,30 @@
+<routes>
+    <vType id="realistic_car"
+           accel="2.6"
+           decel="4.5"
+           emergencyDecel="9.0"
+           maxSpeed="13.9"
+           sigma="0.5"
+           lcCooperative="1.0"
+           lcStrategic="1.0"
+           lcSpeedGain="1.0"
+           jmIgnoreKeepClearTime="-1"
+           jmDriveAfterYellowTime="-1"
+           jmDriveAfterRedTime="-1"/>
+    <flow id="realistic_NB-L_0" type="realistic_car" begin="0.0" end="3600.0" period="13.333" from="417109161#0" to="1477882845" via="732311662#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_NB-S_0" type="realistic_car" begin="0.0" end="3600.0" period="2.857" from="417109161#0" to="-6347924#1" via="732311660" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_NB-R_0" type="realistic_car" begin="0.0" end="3600.0" period="26.667" from="417109161#0" to="417109127" via="417101890#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_NB-R_1" type="realistic_car" begin="0.0" end="3600.0" period="26.667" from="417109161#0" to="984096239#2" via="732311661#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_SB-L_0" type="realistic_car" begin="0.0" end="3600.0" period="13.333" from="39158023#0" to="-356707830#5" via="732311661#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_SB-S_0" type="realistic_car" begin="0.0" end="3600.0" period="2.857" from="39158023#0" to="-6320720" via="417101890#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_SB-R_0" type="realistic_car" begin="0.0" end="3600.0" period="26.667" from="39158023#0" to="6367573#1" via="732311660" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_SB-R_1" type="realistic_car" begin="0.0" end="3600.0" period="26.667" from="39158023#0" to="-6332221#0" via="732311662#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_EB-L_0" type="realistic_car" begin="0.0" end="3600.0" period="13.333" from="417109177#0" to="417095571" via="732311660" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_EB-S_0" type="realistic_car" begin="0.0" end="3600.0" period="2.857" from="417109177#0" to="6388184#4" via="732311661#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_EB-R_0" type="realistic_car" begin="0.0" end="3600.0" period="26.667" from="417109177#0" to="-417095586#6" via="417101890#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_EB-R_1" type="realistic_car" begin="0.0" end="3600.0" period="26.667" from="417109177#0" to="6348303" via="732311662#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_WB-L_0" type="realistic_car" begin="0.0" end="3600.0" period="26.667" from="417109211#0" to="-6380579#5" via="417101890#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_WB-L_1" type="realistic_car" begin="0.0" end="3600.0" period="26.667" from="417109211#0" to="-237427642" via="732311661#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_WB-S_0" type="realistic_car" begin="0.0" end="3600.0" period="2.857" from="417109211#0" to="-6330581" via="732311662#1" departLane="best" departPos="free" departSpeed="max"/>
+    <flow id="realistic_WB-R_0" type="realistic_car" begin="0.0" end="3600.0" period="13.333" from="417109211#0" to="6329264" via="732311660" departLane="best" departPos="free" departSpeed="max"/>
+</routes>

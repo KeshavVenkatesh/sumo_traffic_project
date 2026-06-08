@@ -1,0 +1,22 @@
+<routes>
+    <vType id="global_car"
+           vClass="passenger"
+           guiShape="passenger"
+           length="4.8"
+           width="1.8"
+           minGap="2.5"
+           accel="2.6"
+           decel="4.5"
+           emergencyDecel="9.0"
+           maxSpeed="13.9"
+           sigma="0.5"
+           tau="1.0"
+           lcStrategic="35.0"
+           lcCooperative="1.0"
+           lcSpeedGain="0.03"
+           lcKeepRight="0.15"
+           lcAssertive="0.45"
+           jmIgnoreKeepClearTime="-1"
+           jmDriveAfterYellowTime="-1"
+           jmDriveAfterRedTime="-1"/>
+</routes>
