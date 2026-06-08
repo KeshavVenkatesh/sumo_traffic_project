@@ -17,6 +17,7 @@ DEFAULT_SUMO_HOME = (
     "Versions/1.26.0/EclipseSUMO/share/sumo"
 )
 
+# On Linux, SUMO_HOME is often /usr/share/sumo. Prefer existing env var if set.
 os.environ.setdefault("SUMO_HOME", DEFAULT_SUMO_HOME)
 
 SUMO_TOOLS = os.path.join(os.environ["SUMO_HOME"], "tools")
@@ -26,6 +27,7 @@ if os.path.isdir(SUMO_TOOLS) and SUMO_TOOLS not in sys.path:
 for proj_candidate in (
     "/opt/homebrew/share/proj",
     "/usr/local/share/proj",
+    "/usr/share/proj",
     os.path.join(os.environ["SUMO_HOME"], "proj"),
 ):
     if os.path.exists(os.path.join(proj_candidate, "proj.db")):
@@ -35,6 +37,11 @@ for proj_candidate in (
 
 import numpy as np
 import traci
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 try:
     import gymnasium as gym
@@ -50,9 +57,9 @@ except ImportError:
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-SUMO_BIN_DIR = "/Library/Frameworks/EclipseSUMO.framework/Versions/1.26.0/EclipseSUMO/bin"
-SUMO_GUI_BINARY = os.path.join(SUMO_BIN_DIR, "sumo-gui")
-SUMO_HEADLESS_BINARY = os.path.join(SUMO_BIN_DIR, "sumo")
+SUMO_BIN_DIR_MAC = "/Library/Frameworks/EclipseSUMO.framework/Versions/1.26.0/EclipseSUMO/bin"
+SUMO_GUI_BINARY = os.path.join(SUMO_BIN_DIR_MAC, "sumo-gui")
+SUMO_HEADLESS_BINARY = os.path.join(SUMO_BIN_DIR_MAC, "sumo")
 
 if not os.path.exists(SUMO_GUI_BINARY):
     SUMO_GUI_BINARY = "sumo-gui"
@@ -68,7 +75,7 @@ RANDOM_TRIPS_SCRIPT = os.path.join(os.environ["SUMO_HOME"], "tools", "randomTrip
 SUMO_RUN_LOG = os.path.join(BASE_DIR, "sumo_all_intersections_run.log")
 SUMO_ERROR_LOG = os.path.join(BASE_DIR, "sumo_all_intersections_error.log")
 
-MODEL_FILE = os.path.join(BASE_DIR, "all_intersections_shared_policy")
+MODEL_FILE = os.path.join(BASE_DIR, "all_intersections_six_stage_parallel")
 
 QUIET_SUMO_ARGS = [
     "--no-warnings", "true",
@@ -82,7 +89,6 @@ TRAIN_WITH_SUMO_LOGS = False
 # Simulation / training constants
 # ============================================================
 
-# Old/slower scheme, because it learned better in your tests.
 STEP_LENGTH = 0.5
 DECISION_INTERVAL = 5.0
 TRAIN_EPISODE_SECONDS = 1800
@@ -96,12 +102,15 @@ MAX_GREEN_HOLD = 60.0
 
 REQUIRED_EXIT_GAP = 14.0
 
-# Watched-intersection upstream-line metric settings.
-# This counts cars farther upstream from the stop line, which better matches
-# what you visually see in SUMO GUI.
-UPSTREAM_APPROACH_DISTANCE = 500.0
-QUEUE_SPEED_THRESHOLD = 0.1
+# Queue definitions:
+# stopped_queue: almost completely stopped vehicles.
+# visual_queue / slow_or_stopped: vehicles crawling or stopped, used for training.
+STOPPED_SPEED_THRESHOLD = 0.1
+QUEUE_SPEED_THRESHOLD = 2.0
 SLOW_SPEED_THRESHOLD = 2.0
+
+# For watched-intersection upstream-line metrics.
+UPSTREAM_APPROACH_DISTANCE = 500.0
 
 MAX_NUM_VEHICLES = 2000
 MAX_DEPART_DELAY = 60
@@ -154,12 +163,27 @@ NON_RIGHT_MOVEMENTS = [
     "WB-L", "WB-S",
 ]
 
-PHASE_SLOT_NAMES = [
-    "PHASE 1: N/S Protected Lefts",
-    "PHASE 2: N/S Straights",
-    "PHASE 3: E/W Protected Lefts",
-    "PHASE 4: E/W Straights",
+# New ordered six-stage cycle.
+# The model cannot jump to arbitrary stages. It can only:
+#   action 0 = hold current stage
+#   action 1 = advance to the next valid stage in this order
+STAGE_SLOT_NAMES = [
+    "STAGE 1: North Straight + North Left",
+    "STAGE 2: North Straight + South Straight",
+    "STAGE 3: South Straight + South Left",
+    "STAGE 4: East Straight + East Left",
+    "STAGE 5: East Straight + West Straight",
+    "STAGE 6: West Straight + West Left",
 ]
+
+STAGE_CORE_MOVEMENTS = {
+    0: ["NB-S", "NB-L"],
+    1: ["NB-S", "SB-S"],
+    2: ["SB-S", "SB-L"],
+    3: ["EB-S", "EB-L"],
+    4: ["EB-S", "WB-S"],
+    5: ["WB-S", "WB-L"],
+}
 
 ALL_RIGHT_TURNS = {
     "NB-R": "g",
@@ -168,16 +192,33 @@ ALL_RIGHT_TURNS = {
     "WB-R": "g",
 }
 
-# 12 movements * 4 features each:
-# queue, wait, exists, blocked
-# + 4 phase one-hot
-# + 4 valid phase-slot mask
-# + phase elapsed
-# + sim time
-# + total queue
-# + total wait
-# + active vehicle count
-OBS_DIM = 12 * 4 + 4 + 4 + 5
+NUM_STAGES = 6
+NUM_ACTIONS = 2
+
+# Observation layout:
+# 12 movements * 5 features each:
+#   visual_queue, stopped_queue, wait, exists, blocked          = 60
+# 4 approaches * 4 features each:
+#   vehicles, stopped_queue, slow_or_stopped, total_wait        = 16
+# stage one-hot                                                = 6
+# valid-stage mask                                             = 6
+# misc scalars:
+#   phase_elapsed, sim_time, total_visual_queue_near_stop,
+#   total_wait_near_stop, active_vehicle_count,
+#   total_approach_slow_queue, max_approach_slow_queue          = 7
+OBS_DIM = 12 * 5 + 4 * 4 + NUM_STAGES + NUM_STAGES + 7
+
+DEFAULT_DEVICE = "auto"
+PPO_N_STEPS_SINGLE_ENV = 1024
+PPO_N_STEPS_PARALLEL = 512
+PPO_BATCH_SIZE = 256
+PPO_N_EPOCHS = 10
+PPO_POLICY_KWARGS = {
+    "net_arch": {
+        "pi": [256, 256],
+        "vf": [256, 256],
+    }
+}
 
 
 # ============================================================
@@ -328,6 +369,38 @@ def ensure_xquartz():
 
 
 # ============================================================
+# Device helpers
+# ============================================================
+
+def resolve_device(device_arg):
+    if device_arg == "auto":
+        if torch is not None and torch.cuda.is_available():
+            return "cuda"
+        return "cpu"
+
+    if device_arg == "cuda":
+        if torch is None or not torch.cuda.is_available():
+            print("WARNING: CUDA requested but unavailable. Falling back to CPU.")
+            return "cpu"
+        return "cuda"
+
+    return "cpu"
+
+
+def print_device_info(resolved_device):
+    print()
+    print(f"Using training device: {resolved_device}")
+
+    if torch is not None:
+        print(f"torch version: {torch.__version__}")
+        print(f"CUDA available: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            print(f"CUDA device: {torch.cuda.get_device_name(0)}")
+    else:
+        print("torch is not importable yet.")
+
+
+# ============================================================
 # Geometry helpers
 # ============================================================
 
@@ -416,6 +489,11 @@ def lanes_have_space(out_lanes):
 _LANE_PREDECESSOR_CACHE = None
 
 
+def reset_lane_predecessor_cache():
+    global _LANE_PREDECESSOR_CACHE
+    _LANE_PREDECESSOR_CACHE = None
+
+
 def is_internal_lane(lane_id):
     return not lane_id or lane_id.startswith(":")
 
@@ -445,22 +523,12 @@ def all_normal_lane_ids():
 
 
 def build_lane_predecessor_cache():
-    """
-    Builds a reverse lane graph:
-
-        lane_id -> set(previous lanes that feed into lane_id)
-
-    This lets the watched-intersection printer trace backward from the
-    stop-line lanes and count the full visible line of cars approaching
-    the intersection.
-    """
     global _LANE_PREDECESSOR_CACHE
 
     if _LANE_PREDECESSOR_CACHE is not None:
         return _LANE_PREDECESSOR_CACHE
 
     predecessors = {}
-
     normal_lanes = all_normal_lane_ids()
 
     for lane_id in normal_lanes:
@@ -501,14 +569,6 @@ def classify_lane_approach(lane_id):
 
 
 def trace_upstream_lanes_for_approach(start_lanes, approach, max_distance):
-    """
-    Starting from direct incoming lanes at the traffic light, walk upstream
-    through connected predecessor lanes. Keep lanes that still match the
-    same approach direction.
-
-    This is meant for printing/debugging. It gives a better visual queue count
-    than only counting the final controlled lanes directly at the stop line.
-    """
     from collections import deque
 
     predecessors = build_lane_predecessor_cache()
@@ -553,16 +613,6 @@ def trace_upstream_lanes_for_approach(start_lanes, approach, max_distance):
 
 
 def build_approach_upstream_cache(movement_in_lanes_cache):
-    """
-    Builds a cache like:
-
-        {
-            "NB": set(lanes upstream of all NB movements),
-            "SB": set(...),
-            "EB": set(...),
-            "WB": set(...),
-        }
-    """
     approach_cache = {}
 
     for approach in APPROACHES:
@@ -602,13 +652,13 @@ def build_yellow_state(length, active_indices):
 def build_state_from_movements(
     state_length,
     movement_map,
-    phase_rules,
+    stage_rules,
     check_space=True,
 ):
     state = ["r"] * state_length
     active_indices = set()
 
-    for movement_label, signal_char in phase_rules.items():
+    for movement_label, signal_char in stage_rules.items():
         if signal_char == "r":
             continue
 
@@ -692,57 +742,33 @@ def classify_tls_movements(tls_id):
     return state_length, movement_map
 
 
-def build_safe_phase_plan(movement_map):
-    phases = []
+def build_ordered_stage_plan(movement_map):
+    stages = []
 
-    phase_defs = [
-        {
-            "slot": 0,
-            "name": PHASE_SLOT_NAMES[0],
-            "core": ["NB-L", "SB-L"],
-        },
-        {
-            "slot": 1,
-            "name": PHASE_SLOT_NAMES[1],
-            "core": ["NB-S", "SB-S"],
-        },
-        {
-            "slot": 2,
-            "name": PHASE_SLOT_NAMES[2],
-            "core": ["EB-L", "WB-L"],
-        },
-        {
-            "slot": 3,
-            "name": PHASE_SLOT_NAMES[3],
-            "core": ["EB-S", "WB-S"],
-        },
-    ]
+    for slot in range(NUM_STAGES):
+        core = STAGE_CORE_MOVEMENTS[slot]
+        existing_core = [label for label in core if movement_map.get(label)]
 
-    for phase_def in phase_defs:
-        existing_core = [
-            label
-            for label in phase_def["core"]
-            if movement_map.get(label)
-        ]
-
+        # For T-intersections/partial intersections, keep a stage if at least
+        # one of its core movements exists. Missing stages are skipped in order.
         if not existing_core:
             continue
 
         rules = {}
 
-        for label in phase_def["core"]:
+        for label in core:
             rules[label] = "G"
 
         rules.update(ALL_RIGHT_TURNS)
 
-        phases.append({
-            "slot": phase_def["slot"],
-            "name": phase_def["name"],
+        stages.append({
+            "slot": slot,
+            "name": STAGE_SLOT_NAMES[slot],
             "rules": rules,
             "core_labels": existing_core,
         })
 
-    return phases
+    return stages
 
 
 def build_lane_caches(movement_map):
@@ -828,13 +854,13 @@ def verify_controller_safety(tls_id, controller):
 
     messages = []
 
-    for phase in controller["phases"]:
-        allowed_labels = set(phase["core_labels"]) | right_turn_labels
+    for stage in controller["stages"]:
+        allowed_labels = set(stage["core_labels"]) | right_turn_labels
 
         state, _ = build_state_from_movements(
             controller["state_length"],
             controller["movement_map"],
-            phase["rules"],
+            stage["rules"],
             check_space=False,
         )
 
@@ -847,16 +873,16 @@ def verify_controller_safety(tls_id, controller):
             active_labels.update(labels_by_idx.get(idx, set()))
 
         bad_labels = active_labels - allowed_labels
-        missing_core = set(phase["core_labels"]) - active_labels
+        missing_core = set(stage["core_labels"]) - active_labels
 
         if bad_labels:
             messages.append(
-                f"{phase['name']}: forbidden movements green: {sorted(bad_labels)}"
+                f"{stage['name']}: forbidden movements green: {sorted(bad_labels)}"
             )
 
         if missing_core:
             messages.append(
-                f"{phase['name']}: missing core movements: {sorted(missing_core)}"
+                f"{stage['name']}: missing core movements: {sorted(missing_core)}"
             )
 
     return len(messages) == 0, messages
@@ -869,17 +895,12 @@ def verify_controller_safety(tls_id, controller):
 def build_controller_for_tls(tls_id, activate=True, require_safe=True):
     try:
         state_length, movement_map = classify_tls_movements(tls_id)
-        phases = build_safe_phase_plan(movement_map)
+        stages = build_ordered_stage_plan(movement_map)
     except traci.TraCIException:
         return None
 
-    if len(phases) < 2:
+    if len(stages) < 2:
         return None
-
-    slot_to_pos = {
-        phase["slot"]: i
-        for i, phase in enumerate(phases)
-    }
 
     movement_in_lanes_cache, movement_out_lanes_cache, all_in_lanes = build_lane_caches(
         movement_map
@@ -897,14 +918,13 @@ def build_controller_for_tls(tls_id, activate=True, require_safe=True):
         "movement_out_lanes_cache": movement_out_lanes_cache,
         "approach_upstream_lanes_cache": approach_upstream_lanes_cache,
         "all_in_lanes": all_in_lanes,
-        "phases": phases,
-        "slot_to_pos": slot_to_pos,
-        "phase_pos": 0,
+        "stages": stages,
+        "stage_pos": 0,
         "mode": "green",
         "remaining": 0.0,
-        "phase_elapsed": 0.0,
+        "stage_elapsed": 0.0,
         "last_active_indices": set(),
-        "next_phase_pos": None,
+        "next_stage_pos": None,
         "disabled": False,
     }
 
@@ -914,21 +934,32 @@ def build_controller_for_tls(tls_id, activate=True, require_safe=True):
             return None
 
     if activate:
-        start_green(controller, phase_pos=0)
+        start_green(controller, stage_pos=0)
 
     return controller
 
 
-def start_green(controller, phase_pos=None):
-    if phase_pos is not None:
-        controller["phase_pos"] = phase_pos
+def current_stage(controller):
+    return controller["stages"][controller["stage_pos"]]
 
-    phase = controller["phases"][controller["phase_pos"]]
+
+def next_valid_stage_pos(controller):
+    if not controller["stages"]:
+        return 0
+
+    return (controller["stage_pos"] + 1) % len(controller["stages"])
+
+
+def start_green(controller, stage_pos=None):
+    if stage_pos is not None:
+        controller["stage_pos"] = stage_pos
+
+    stage = current_stage(controller)
 
     green_state, active_indices = build_state_from_movements(
         controller["state_length"],
         controller["movement_map"],
-        phase["rules"],
+        stage["rules"],
         check_space=True,
     )
 
@@ -939,18 +970,18 @@ def start_green(controller, phase_pos=None):
 
     controller["mode"] = "green"
     controller["remaining"] = 0.0
-    controller["phase_elapsed"] = 0.0
+    controller["stage_elapsed"] = 0.0
     controller["last_active_indices"] = active_indices
-    controller["next_phase_pos"] = None
+    controller["next_stage_pos"] = None
 
 
 def update_green(controller):
-    phase = controller["phases"][controller["phase_pos"]]
+    stage = current_stage(controller)
 
     green_state, active_indices = build_state_from_movements(
         controller["state_length"],
         controller["movement_map"],
-        phase["rules"],
+        stage["rules"],
         check_space=True,
     )
 
@@ -987,14 +1018,16 @@ def start_all_red(controller):
     controller["remaining"] = T_ALL_RED
 
 
-def request_switch(controller, new_phase_pos):
+def request_advance(controller):
     if controller["mode"] != "green":
         return False
 
-    if new_phase_pos == controller["phase_pos"]:
+    new_stage_pos = next_valid_stage_pos(controller)
+
+    if new_stage_pos == controller["stage_pos"]:
         return False
 
-    controller["next_phase_pos"] = new_phase_pos
+    controller["next_stage_pos"] = new_stage_pos
     start_yellow(controller)
     return True
 
@@ -1003,7 +1036,7 @@ def update_controller_after_simstep(controller):
     try:
         if controller["mode"] == "green":
             update_green(controller)
-            controller["phase_elapsed"] += STEP_LENGTH
+            controller["stage_elapsed"] += STEP_LENGTH
 
         elif controller["mode"] == "yellow":
             controller["remaining"] -= STEP_LENGTH
@@ -1015,14 +1048,12 @@ def update_controller_after_simstep(controller):
             controller["remaining"] -= STEP_LENGTH
 
             if controller["remaining"] <= 0:
-                next_pos = controller["next_phase_pos"]
+                next_pos = controller["next_stage_pos"]
 
                 if next_pos is None:
-                    next_pos = (
-                        controller["phase_pos"] + 1
-                    ) % len(controller["phases"])
+                    next_pos = next_valid_stage_pos(controller)
 
-                start_green(controller, phase_pos=next_pos)
+                start_green(controller, stage_pos=next_pos)
 
     except traci.TraCIException:
         controller["disabled"] = True
@@ -1049,6 +1080,8 @@ def run_control_steps(seconds, controllers):
 
 
 def apply_model_action(controller, action):
+    # action 0 = hold current stage
+    # action 1 = advance to next valid stage in fixed order
     action = int(action)
 
     if controller.get("disabled"):
@@ -1058,27 +1091,19 @@ def apply_model_action(controller, action):
         return False
 
     if (
-        controller["phase_elapsed"] >= MAX_GREEN_HOLD
-        and len(controller["phases"]) > 1
+        controller["stage_elapsed"] >= MAX_GREEN_HOLD
+        and len(controller["stages"]) > 1
     ):
-        next_pos = (
-            controller["phase_pos"] + 1
-        ) % len(controller["phases"])
+        return request_advance(controller)
 
-        return request_switch(controller, next_pos)
-
-    if action > 0 and controller["phase_elapsed"] >= MIN_GREEN_BEFORE_SWITCH:
-        desired_slot = action - 1
-
-        if desired_slot in controller["slot_to_pos"]:
-            desired_pos = controller["slot_to_pos"][desired_slot]
-            return request_switch(controller, desired_pos)
+    if action == 1 and controller["stage_elapsed"] >= MIN_GREEN_BEFORE_SWITCH:
+        return request_advance(controller)
 
     return False
 
 
 def action_mask_for_controller(controller):
-    mask = np.zeros(5, dtype=bool)
+    mask = np.zeros(NUM_ACTIONS, dtype=bool)
     mask[0] = True
 
     if controller is None or controller.get("disabled"):
@@ -1087,11 +1112,11 @@ def action_mask_for_controller(controller):
     if controller["mode"] != "green":
         return mask
 
-    if controller["phase_elapsed"] < MIN_GREEN_BEFORE_SWITCH:
+    if controller["stage_elapsed"] < MIN_GREEN_BEFORE_SWITCH:
         return mask
 
-    for phase in controller["phases"]:
-        mask[phase["slot"] + 1] = True
+    if len(controller["stages"]) > 1:
+        mask[1] = True
 
     return mask
 
@@ -1111,7 +1136,8 @@ def movement_queue_and_wait(controller, movement_label):
         except traci.TraCIException:
             pass
 
-    queue = 0.0
+    visual_queue = 0.0
+    stopped_queue = 0.0
     wait = 0.0
 
     for veh_id in veh_ids:
@@ -1119,14 +1145,17 @@ def movement_queue_and_wait(controller, movement_label):
             speed = traci.vehicle.getSpeed(veh_id)
 
             if speed < QUEUE_SPEED_THRESHOLD:
-                queue += 1.0
+                visual_queue += 1.0
+
+            if speed < STOPPED_SPEED_THRESHOLD:
+                stopped_queue += 1.0
 
             wait += traci.vehicle.getWaitingTime(veh_id)
 
         except traci.TraCIException:
             pass
 
-    return queue, wait
+    return visual_queue, stopped_queue, wait
 
 
 def movement_exists(controller, movement_label):
@@ -1146,10 +1175,11 @@ def get_movement_stats(controller):
     stats = {}
 
     for label in MOVEMENT_LABELS:
-        q, w = movement_queue_and_wait(controller, label)
+        visual_q, stopped_q, w = movement_queue_and_wait(controller, label)
 
         stats[label] = {
-            "queue": q,
+            "visual_queue": visual_q,
+            "stopped_queue": stopped_q,
             "wait": w,
             "exists": 1.0 if movement_exists(controller, label) else 0.0,
             "blocked": 1.0 if movement_is_blocked(controller, label) else 0.0,
@@ -1159,150 +1189,11 @@ def get_movement_stats(controller):
 
 
 def current_core_movements(controller):
-    phase = controller["phases"][controller["phase_pos"]]
-    return set(phase["core_labels"])
-
-
-def total_controlled_wait_and_queue(controller):
-    stats = get_movement_stats(controller)
-
-    total_wait = sum(item["wait"] for item in stats.values())
-    total_queue = sum(item["queue"] for item in stats.values())
-
-    return total_wait, total_queue
-
-
-def get_observation(controller):
-    stats = get_movement_stats(controller)
-
-    obs = []
-
-    for label in MOVEMENT_LABELS:
-        obs.append(stats[label]["queue"] / 100.0)
-        obs.append(stats[label]["wait"] / 1000.0)
-        obs.append(stats[label]["exists"])
-        obs.append(stats[label]["blocked"])
-
-    phase_one_hot = [0.0, 0.0, 0.0, 0.0]
-    current_phase = controller["phases"][controller["phase_pos"]]
-    current_slot = current_phase["slot"]
-
-    phase_one_hot[current_slot] = 1.0
-    obs.extend(phase_one_hot)
-
-    valid_phase_slots = [0.0, 0.0, 0.0, 0.0]
-
-    for phase in controller["phases"]:
-        valid_phase_slots[phase["slot"]] = 1.0
-
-    obs.extend(valid_phase_slots)
-
-    total_wait = sum(item["wait"] for item in stats.values())
-    total_queue = sum(item["queue"] for item in stats.values())
-
-    obs.append(controller["phase_elapsed"] / MAX_GREEN_HOLD)
-    obs.append(traci.simulation.getTime() / TRAIN_EPISODE_SECONDS)
-    obs.append(total_queue / 100.0)
-    obs.append(total_wait / 1000.0)
-    obs.append(traci.vehicle.getIDCount() / max(1.0, MAX_NUM_VEHICLES))
-
-    return np.array(obs, dtype=np.float32)
-
-
-def compute_reward(controller, switched, arrived_interval):
-    stats = get_movement_stats(controller)
-
-    total_wait = sum(item["wait"] for item in stats.values())
-    total_queue = sum(item["queue"] for item in stats.values())
-
-    existing_waits = [
-        item["wait"]
-        for item in stats.values()
-        if item["exists"] > 0
-    ]
-
-    existing_queues = [
-        item["queue"]
-        for item in stats.values()
-        if item["exists"] > 0
-    ]
-
-    max_movement_wait = max(existing_waits) if existing_waits else 0.0
-    max_movement_queue = max(existing_queues) if existing_queues else 0.0
-
-    active_core = current_core_movements(controller)
-
-    active_core_queue = sum(
-        stats[label]["queue"]
-        for label in active_core
-    )
-
-    existing_non_right = [
-        label
-        for label in NON_RIGHT_MOVEMENTS
-        if stats[label]["exists"] > 0
-    ]
-
-    red_core = [
-        label
-        for label in existing_non_right
-        if label not in active_core
-    ]
-
-    red_queue = sum(
-        stats[label]["queue"]
-        for label in red_core
-    )
-
-    red_queue_pressure = max(0.0, red_queue - active_core_queue)
-
-    blocked_exit_count = sum(
-        1.0
-        for label in MOVEMENT_LABELS
-        if stats[label]["exists"] > 0 and stats[label]["blocked"] > 0
-    )
-
-    reward = 0.0
-
-    reward -= total_wait / 500.0
-    reward -= total_queue / 50.0
-
-    reward -= max_movement_wait / 1000.0
-    reward -= max_movement_queue / 25.0
-
-    reward -= red_queue_pressure / 100.0
-    reward -= blocked_exit_count * 0.5
-
-    reward += arrived_interval * 0.2
-
-    if switched:
-        reward -= 0.2
-
-    if controller["phase_elapsed"] > MAX_GREEN_HOLD:
-        reward -= 1.0
-
-    return float(reward)
+    stage = current_stage(controller)
+    return set(stage["core_labels"])
 
 
 def get_approach_line_metrics(controller):
-    """
-    Counts the specific upstream line of cars for each approach direction.
-
-    For each of NB/SB/EB/WB, this counts vehicles on lanes leading into the
-    watched intersection up to UPSTREAM_APPROACH_DISTANCE meters upstream.
-
-    total_vehicles:
-        all vehicles on that upstream approach line
-
-    stopped_queue:
-        vehicles with speed < QUEUE_SPEED_THRESHOLD
-
-    slow_or_stopped:
-        vehicles with speed < SLOW_SPEED_THRESHOLD
-
-    total_wait:
-        accumulated waiting time of vehicles on that approach line
-    """
     result = {}
 
     for approach in APPROACHES:
@@ -1327,7 +1218,7 @@ def get_approach_line_metrics(controller):
             try:
                 speed = traci.vehicle.getSpeed(veh_id)
 
-                if speed < QUEUE_SPEED_THRESHOLD:
+                if speed < STOPPED_SPEED_THRESHOLD:
                     stopped_queue += 1.0
 
                 if speed < SLOW_SPEED_THRESHOLD:
@@ -1349,17 +1240,182 @@ def get_approach_line_metrics(controller):
     return result
 
 
-def print_intersection_metrics(controller, last_action=None):
+def total_controlled_wait_and_queue(controller):
     stats = get_movement_stats(controller)
-    phase = controller["phases"][controller["phase_pos"]]
+
+    total_wait = sum(item["wait"] for item in stats.values())
+    total_visual_queue = sum(item["visual_queue"] for item in stats.values())
+
+    return total_wait, total_visual_queue
+
+
+def get_observation(controller):
+    movement_stats = get_movement_stats(controller)
+    approach_stats = get_approach_line_metrics(controller)
+
+    obs = []
+
+    for label in MOVEMENT_LABELS:
+        item = movement_stats[label]
+        obs.append(item["visual_queue"] / 100.0)
+        obs.append(item["stopped_queue"] / 100.0)
+        obs.append(item["wait"] / 1000.0)
+        obs.append(item["exists"])
+        obs.append(item["blocked"])
+
+    for approach in APPROACHES:
+        item = approach_stats[approach]
+        obs.append(item["total_vehicles"] / 200.0)
+        obs.append(item["stopped_queue"] / 100.0)
+        obs.append(item["slow_or_stopped"] / 100.0)
+        obs.append(item["total_wait"] / 2000.0)
+
+    stage_one_hot = [0.0] * NUM_STAGES
+    current_slot = current_stage(controller)["slot"]
+    stage_one_hot[current_slot] = 1.0
+    obs.extend(stage_one_hot)
+
+    valid_stage_slots = [0.0] * NUM_STAGES
+    for stage in controller["stages"]:
+        valid_stage_slots[stage["slot"]] = 1.0
+    obs.extend(valid_stage_slots)
+
+    total_wait = sum(item["wait"] for item in movement_stats.values())
+    total_visual_queue = sum(item["visual_queue"] for item in movement_stats.values())
+    total_approach_slow_queue = sum(
+        item["slow_or_stopped"] for item in approach_stats.values()
+    )
+    max_approach_slow_queue = max(
+        (item["slow_or_stopped"] for item in approach_stats.values()),
+        default=0.0,
+    )
+
+    obs.append(controller["stage_elapsed"] / MAX_GREEN_HOLD)
+    obs.append(traci.simulation.getTime() / TRAIN_EPISODE_SECONDS)
+    obs.append(total_visual_queue / 100.0)
+    obs.append(total_wait / 1000.0)
+    obs.append(traci.vehicle.getIDCount() / max(1.0, MAX_NUM_VEHICLES))
+    obs.append(total_approach_slow_queue / 200.0)
+    obs.append(max_approach_slow_queue / 100.0)
+
+    return np.array(obs, dtype=np.float32)
+
+
+def compute_reward(controller, switched, arrived_interval):
+    movement_stats = get_movement_stats(controller)
+    approach_stats = get_approach_line_metrics(controller)
+
+    total_wait = sum(item["wait"] for item in movement_stats.values())
+    total_visual_queue = sum(item["visual_queue"] for item in movement_stats.values())
+
+    existing_waits = [
+        item["wait"]
+        for item in movement_stats.values()
+        if item["exists"] > 0
+    ]
+
+    existing_visual_queues = [
+        item["visual_queue"]
+        for item in movement_stats.values()
+        if item["exists"] > 0
+    ]
+
+    max_movement_wait = max(existing_waits) if existing_waits else 0.0
+    max_movement_visual_queue = max(existing_visual_queues) if existing_visual_queues else 0.0
+
     active_core = current_core_movements(controller)
 
-    total_queue = sum(item["queue"] for item in stats.values())
-    total_wait = sum(item["wait"] for item in stats.values())
+    active_core_queue = sum(
+        movement_stats[label]["visual_queue"]
+        for label in active_core
+    )
+
+    existing_non_right = [
+        label
+        for label in NON_RIGHT_MOVEMENTS
+        if movement_stats[label]["exists"] > 0
+    ]
+
+    red_core = [
+        label
+        for label in existing_non_right
+        if label not in active_core
+    ]
+
+    red_queue = sum(
+        movement_stats[label]["visual_queue"]
+        for label in red_core
+    )
+
+    red_queue_pressure = max(0.0, red_queue - active_core_queue)
+
+    blocked_exit_count = sum(
+        1.0
+        for label in MOVEMENT_LABELS
+        if movement_stats[label]["exists"] > 0 and movement_stats[label]["blocked"] > 0
+    )
+
+    total_approach_slow_queue = sum(
+        item["slow_or_stopped"] for item in approach_stats.values()
+    )
+
+    max_approach_slow_queue = max(
+        (item["slow_or_stopped"] for item in approach_stats.values()),
+        default=0.0,
+    )
+
+    total_approach_wait = sum(
+        item["total_wait"] for item in approach_stats.values()
+    )
+
+    reward = 0.0
+
+    # Main local intersection objectives.
+    reward -= total_wait / 500.0
+    reward -= total_visual_queue / 50.0
+
+    # Starvation prevention near the stop line.
+    reward -= max_movement_wait / 1000.0
+    reward -= max_movement_visual_queue / 25.0
+
+    # Demand pressure on red movements.
+    reward -= red_queue_pressure / 100.0
+
+    # Wider upstream line-of-cars penalty.
+    reward -= total_approach_slow_queue / 100.0
+    reward -= max_approach_slow_queue / 40.0
+    reward -= total_approach_wait / 3000.0
+
+    # Spillback/gridlock penalty.
+    reward -= blocked_exit_count * 0.5
+
+    # Throughput bonus.
+    reward += arrived_interval * 0.2
+
+    # Do not waste yellow/all-red by advancing too often.
+    if switched:
+        reward -= 0.2
+
+    # Holding too long is bad; the controller also forces advance after max hold.
+    if controller["stage_elapsed"] > MAX_GREEN_HOLD:
+        reward -= 1.0
+
+    return float(reward)
+
+
+def print_intersection_metrics(controller, last_action=None):
+    movement_stats = get_movement_stats(controller)
+    approach_stats = get_approach_line_metrics(controller)
+    stage = current_stage(controller)
+    active_core = current_core_movements(controller)
+
+    total_visual_queue = sum(item["visual_queue"] for item in movement_stats.values())
+    total_stopped_queue = sum(item["stopped_queue"] for item in movement_stats.values())
+    total_wait = sum(item["wait"] for item in movement_stats.values())
 
     existing_items = [
         (label, item)
-        for label, item in stats.items()
+        for label, item in movement_stats.items()
         if item["exists"] > 0
     ]
 
@@ -1369,27 +1425,27 @@ def print_intersection_metrics(controller, last_action=None):
     max_wait_value = 0.0
 
     for label, item in existing_items:
-        if item["queue"] > max_queue_value:
+        if item["visual_queue"] > max_queue_value:
             max_queue_label = label
-            max_queue_value = item["queue"]
+            max_queue_value = item["visual_queue"]
 
         if item["wait"] > max_wait_value:
             max_wait_label = label
             max_wait_value = item["wait"]
 
     active_core_queue = sum(
-        stats[label]["queue"]
+        movement_stats[label]["visual_queue"]
         for label in active_core
-        if label in stats
+        if label in movement_stats
     )
 
     red_core = [
         label
         for label in NON_RIGHT_MOVEMENTS
-        if stats[label]["exists"] > 0 and label not in active_core
+        if movement_stats[label]["exists"] > 0 and label not in active_core
     ]
 
-    red_queue = sum(stats[label]["queue"] for label in red_core)
+    red_queue = sum(movement_stats[label]["visual_queue"] for label in red_core)
     red_queue_pressure = max(0.0, red_queue - active_core_queue)
 
     controlled_veh_ids = set()
@@ -1403,20 +1459,19 @@ def print_intersection_metrics(controller, last_action=None):
     print()
     print("=" * 100)
     print(f"WATCHED INTERSECTION: {controller['tls_id']}")
-    print(f"phase: {phase['name']}")
+    print(f"stage: {stage['name']}")
     print(f"mode: {controller['mode']}")
-    print(f"phase_elapsed: {controller['phase_elapsed']:.1f}s")
-    print(f"last_model_action: {last_action}")
+    print(f"stage_elapsed: {controller['stage_elapsed']:.1f}s")
+    print(f"last_model_action: {last_action}  (0=hold, 1=advance)")
     print(f"vehicles_on_controlled_incoming_lanes: {len(controlled_veh_ids)}")
-    print(f"total_queue_near_stop_line: {total_queue:.0f}")
+    print(f"visual_queue_near_stop_line: {total_visual_queue:.0f}")
+    print(f"stopped_queue_near_stop_line: {total_stopped_queue:.0f}")
     print(f"total_wait_near_stop_line: {total_wait:.1f}s")
-    print(f"max_movement_queue_near_stop_line: {max_queue_label} = {max_queue_value:.0f}")
+    print(f"max_visual_movement_queue_near_stop_line: {max_queue_label} = {max_queue_value:.0f}")
     print(f"max_movement_wait_near_stop_line: {max_wait_label} = {max_wait_value:.1f}s")
-    print(f"active_core_queue: {active_core_queue:.0f}")
-    print(f"red_queue: {red_queue:.0f}")
+    print(f"active_core_visual_queue: {active_core_queue:.0f}")
+    print(f"red_visual_queue: {red_queue:.0f}")
     print(f"red_queue_pressure: {red_queue_pressure:.0f}")
-
-    approach_line_stats = get_approach_line_metrics(controller)
 
     print()
     print(
@@ -1427,7 +1482,7 @@ def print_intersection_metrics(controller, last_action=None):
     print("-" * 78)
 
     for approach in APPROACHES:
-        item = approach_line_stats[approach]
+        item = approach_stats[approach]
 
         print(
             f"{approach:8}  "
@@ -1440,13 +1495,17 @@ def print_intersection_metrics(controller, last_action=None):
 
     print()
     print("movement metrics near stop line:")
-    print("label   exists  queue  total_wait_s  blocked  active_core")
-    print("-" * 70)
+    print("label   exists  visual_q  stopped_q  total_wait_s  blocked  active_core")
+    print("-" * 82)
 
     for label in MOVEMENT_LABELS:
-        item = stats[label]
+        item = movement_stats[label]
 
-        if item["exists"] <= 0 and item["queue"] <= 0 and item["wait"] <= 0:
+        if (
+            item["exists"] <= 0
+            and item["visual_queue"] <= 0
+            and item["wait"] <= 0
+        ):
             continue
 
         is_active_core = label in active_core
@@ -1454,7 +1513,8 @@ def print_intersection_metrics(controller, last_action=None):
         print(
             f"{label:5}  "
             f"{int(item['exists']):>6}  "
-            f"{item['queue']:>5.0f}  "
+            f"{item['visual_queue']:>8.0f}  "
+            f"{item['stopped_queue']:>9.0f}  "
             f"{item['wait']:>12.1f}  "
             f"{int(item['blocked']):>7}  "
             f"{str(is_active_core):>11}"
@@ -1486,6 +1546,7 @@ def base_sumo_cmd(route_file=None, gui=False, end=10):
 
 
 def discover_usable_tls(route_file=None, verbose=True, return_skipped=False):
+    reset_lane_predecessor_cache()
     traci.start(base_sumo_cmd(route_file=route_file, gui=False, end=10))
 
     usable = []
@@ -1504,7 +1565,7 @@ def discover_usable_tls(route_file=None, verbose=True, return_skipped=False):
             if controller is None:
                 skipped.append({
                     "id": tls_id,
-                    "reason": "unusable: could not classify into at least 2 safe phases",
+                    "reason": "unusable: could not classify into at least 2 safe ordered stages",
                     "details": [],
                 })
                 continue
@@ -1514,7 +1575,7 @@ def discover_usable_tls(route_file=None, verbose=True, return_skipped=False):
             if not safe:
                 skipped.append({
                     "id": tls_id,
-                    "reason": "unsafe: failed phase-safety verification",
+                    "reason": "unsafe: failed stage-safety verification",
                     "details": messages,
                 })
                 continue
@@ -1524,8 +1585,9 @@ def discover_usable_tls(route_file=None, verbose=True, return_skipped=False):
             if verbose:
                 print()
                 print(f"TRAINED / usable: {tls_id}")
-                for phase in controller["phases"]:
-                    print(f"  action {phase['slot'] + 1}: {phase['name']}")
+                for stage in controller["stages"]:
+                    print(f"  ordered stage {stage['slot'] + 1}: {stage['name']}")
+                print("  actions: 0=hold, 1=advance to next valid ordered stage")
 
     finally:
         traci.close()
@@ -1560,6 +1622,7 @@ def discover_usable_tls(route_file=None, verbose=True, return_skipped=False):
 
 
 def verify_all_tls(route_file=None):
+    reset_lane_predecessor_cache()
     traci.start(base_sumo_cmd(route_file=route_file, gui=False, end=10))
 
     passed = []
@@ -1617,7 +1680,7 @@ def verify_all_tls(route_file=None):
         print("Unusable / skipped intersections:")
         for tls_id in unusable:
             print(f"  NOT TRAINED: {tls_id}")
-            print("               reason: unusable or fewer than 2 safe phases")
+            print("               reason: unusable or fewer than 2 safe ordered stages")
 
     return passed, failed, unusable
 
@@ -1636,6 +1699,7 @@ class SharedIntersectionEnv(gym.Env if gym is not None else object):
         randomize_traffic=True,
         route_variants=None,
         max_vehicle_variants=None,
+        rank=0,
     ):
         if gym is None or spaces is None:
             raise ImportError(
@@ -1651,6 +1715,7 @@ class SharedIntersectionEnv(gym.Env if gym is not None else object):
         self.randomize_traffic = randomize_traffic
         self.route_variants = route_variants or discover_background_route_variants()
         self.max_vehicle_variants = max_vehicle_variants or MAX_VEHICLE_VARIANTS
+        self.rank = rank
 
         self.current_route_file = BACKGROUND_ROUTE_FILE
         self.current_max_num_vehicles = MAX_NUM_VEHICLES
@@ -1660,7 +1725,7 @@ class SharedIntersectionEnv(gym.Env if gym is not None else object):
         self.started = False
         self.controller = None
 
-        self.action_space = spaces.Discrete(5)
+        self.action_space = spaces.Discrete(NUM_ACTIONS)
 
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -1677,7 +1742,7 @@ class SharedIntersectionEnv(gym.Env if gym is not None else object):
         else:
             self.current_route_file = BACKGROUND_ROUTE_FILE
             self.current_max_num_vehicles = MAX_NUM_VEHICLES
-            self.current_sumo_seed = 42
+            self.current_sumo_seed = 42 + self.rank
 
         self.current_tls_id = random.choice(self.tls_ids)
 
@@ -1716,6 +1781,8 @@ class SharedIntersectionEnv(gym.Env if gym is not None else object):
             except Exception:
                 pass
 
+        reset_lane_predecessor_cache()
+
         if self.gui:
             ensure_xquartz()
 
@@ -1723,7 +1790,7 @@ class SharedIntersectionEnv(gym.Env if gym is not None else object):
 
         if PRINT_TRAINING_SCENARIOS:
             print(
-                f"Training on tls={self.current_tls_id}, "
+                f"Training env={self.rank}, tls={self.current_tls_id}, "
                 f"route={os.path.basename(self.current_route_file)}, "
                 f"max_vehicles={self.current_max_num_vehicles}, "
                 f"seed={self.current_sumo_seed}"
@@ -1768,13 +1835,13 @@ class SharedIntersectionEnv(gym.Env if gym is not None else object):
         terminated = sim_time >= TRAIN_EPISODE_SECONDS
         truncated = not alive or traci.simulation.getMinExpectedNumber() <= 0
 
-        phase = self.controller["phases"][self.controller["phase_pos"]]
+        stage = current_stage(self.controller)
 
         info = {
             "tls_id": self.current_tls_id,
             "sim_time": sim_time,
-            "phase_name": phase["name"],
-            "phase_slot": phase["slot"],
+            "stage_name": stage["name"],
+            "stage_slot": stage["slot"],
             "mode": self.controller["mode"],
             "switched": switched,
             "arrived_interval": arrived_interval,
@@ -1794,18 +1861,54 @@ class SharedIntersectionEnv(gym.Env if gym is not None else object):
         self.started = False
 
 
+def make_env(rank, tls_ids, route_variants, max_vehicle_variants, randomize_traffic):
+    def _init():
+        random.seed(10_000 + rank)
+        np.random.seed(10_000 + rank)
+
+        return SharedIntersectionEnv(
+            tls_ids=tls_ids,
+            gui=False,
+            randomize_traffic=randomize_traffic,
+            route_variants=route_variants,
+            max_vehicle_variants=max_vehicle_variants,
+            rank=rank,
+        )
+
+    return _init
+
+
 # ============================================================
 # Training / running
 # ============================================================
 
-def train_model(timesteps, model_path, gui=False, randomize_traffic=True, fresh=False):
+def train_model(
+    timesteps,
+    model_path,
+    gui=False,
+    randomize_traffic=True,
+    fresh=False,
+    n_envs=1,
+    device=DEFAULT_DEVICE,
+):
     try:
         from sb3_contrib import MaskablePPO
+        from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor
     except ImportError as e:
         raise ImportError(
-            "Missing sb3-contrib. Run:\n"
+            "Missing dependencies. Run:\n"
             "python3 -m pip install gymnasium stable-baselines3 sb3-contrib"
         ) from e
+
+    if gui and n_envs != 1:
+        print("WARNING: GUI training only supports one environment. Using n_envs=1.")
+        n_envs = 1
+
+    if n_envs < 1:
+        n_envs = 1
+
+    resolved_device = resolve_device(device)
+    print_device_info(resolved_device)
 
     route_variants = discover_background_route_variants()
 
@@ -1843,17 +1946,48 @@ def train_model(timesteps, model_path, gui=False, randomize_traffic=True, fresh=
         raise RuntimeError("No usable traffic lights found. Cannot train.")
 
     print()
+    print(f"Parallel training environments: {n_envs}")
     print("Training route variants:")
     for route_file in route_variants:
         print(f"  {os.path.basename(route_file)}")
 
-    env = SharedIntersectionEnv(
-        tls_ids=tls_ids,
-        gui=gui,
-        randomize_traffic=randomize_traffic,
-        route_variants=route_variants,
-        max_vehicle_variants=MAX_VEHICLE_VARIANTS,
-    )
+    if gui:
+        env = DummyVecEnv([
+            lambda: SharedIntersectionEnv(
+                tls_ids=tls_ids,
+                gui=True,
+                randomize_traffic=randomize_traffic,
+                route_variants=route_variants,
+                max_vehicle_variants=MAX_VEHICLE_VARIANTS,
+                rank=0,
+            )
+        ])
+    elif n_envs == 1:
+        env = DummyVecEnv([
+            make_env(
+                rank=0,
+                tls_ids=tls_ids,
+                route_variants=route_variants,
+                max_vehicle_variants=MAX_VEHICLE_VARIANTS,
+                randomize_traffic=randomize_traffic,
+            )
+        ])
+    else:
+        env = SubprocVecEnv(
+            [
+                make_env(
+                    rank=i,
+                    tls_ids=tls_ids,
+                    route_variants=route_variants,
+                    max_vehicle_variants=MAX_VEHICLE_VARIANTS,
+                    randomize_traffic=randomize_traffic,
+                )
+                for i in range(n_envs)
+            ],
+            start_method="spawn",
+        )
+
+    env = VecMonitor(env)
 
     model_zip_path = model_path
     if not model_zip_path.endswith(".zip"):
@@ -1861,44 +1995,64 @@ def train_model(timesteps, model_path, gui=False, randomize_traffic=True, fresh=
 
     resume = (not fresh) and os.path.exists(model_zip_path)
 
-    if resume:
-        print()
-        print(f"Loading existing model and continuing training: {model_zip_path}")
-        model = MaskablePPO.load(model_path, env=env)
-    else:
-        print()
-        print("Creating new shared all-intersections model.")
-        model = MaskablePPO(
-            "MlpPolicy",
-            env,
-            verbose=1,
-            learning_rate=3e-4,
-            n_steps=1024,
-            batch_size=64,
-            gamma=0.99,
+    try:
+        if resume:
+            print()
+            print(f"Loading existing model and continuing training: {model_zip_path}")
+            model = MaskablePPO.load(
+                model_path,
+                env=env,
+                device=resolved_device,
+            )
+        else:
+            print()
+            print("Creating new shared ordered six-stage all-intersections model.")
+
+            n_steps = PPO_N_STEPS_SINGLE_ENV if n_envs == 1 else PPO_N_STEPS_PARALLEL
+
+            model = MaskablePPO(
+                "MlpPolicy",
+                env,
+                verbose=1,
+                learning_rate=3e-4,
+                n_steps=n_steps,
+                batch_size=PPO_BATCH_SIZE,
+                n_epochs=PPO_N_EPOCHS,
+                gamma=0.99,
+                device=resolved_device,
+                policy_kwargs=PPO_POLICY_KWARGS,
+            )
+
+        model.learn(
+            total_timesteps=timesteps,
+            progress_bar=True,
+            reset_num_timesteps=not resume,
         )
 
-    model.learn(
-        total_timesteps=timesteps,
-        progress_bar=True,
-        reset_num_timesteps=not resume,
-    )
+        model.save(model_path)
+        print()
+        print(f"Saved model to: {model_path}")
 
-    model.save(model_path)
-    env.close()
-
-    print()
-    print(f"Saved model to: {model_path}")
+    finally:
+        env.close()
 
 
-def run_all_intersections(model_path, gui=True, watch_tls=None, watch_every=30.0):
+def run_all_intersections(
+    model_path,
+    gui=True,
+    watch_tls=None,
+    watch_every=30.0,
+    device=DEFAULT_DEVICE,
+):
     try:
         from sb3_contrib import MaskablePPO
     except ImportError as e:
         raise ImportError(
-            "Missing sb3-contrib. Run:\n"
+            "Missing dependencies. Run:\n"
             "python3 -m pip install gymnasium stable-baselines3 sb3-contrib"
         ) from e
+
+    resolved_device = resolve_device(device)
 
     if gui:
         ensure_xquartz()
@@ -1922,8 +2076,9 @@ def run_all_intersections(model_path, gui=True, watch_tls=None, watch_every=30.0
     print("Starting all-intersection model simulation:")
     print(" ".join(sumo_cmd))
 
-    model = MaskablePPO.load(model_path)
+    model = MaskablePPO.load(model_path, device=resolved_device)
 
+    reset_lane_predecessor_cache()
     traci.start(sumo_cmd)
 
     try:
@@ -1941,6 +2096,7 @@ def run_all_intersections(model_path, gui=True, watch_tls=None, watch_every=30.0
 
         print()
         print(f"Controlling {len(controllers)} traffic lights.")
+        print("Runtime actions: 0=hold current stage, 1=advance to next valid ordered stage.")
 
         if watch_tls is not None:
             watched_exists = any(c["tls_id"] == watch_tls for c in controllers)
@@ -2003,7 +2159,7 @@ def run_all_intersections(model_path, gui=True, watch_tls=None, watch_every=30.0
                     f"t={sim_time:7.1f}, "
                     f"active={active:5d}, "
                     f"controlled_tls={len(controllers):3d}, "
-                    f"total_queue={total_queue:.0f}, "
+                    f"total_visual_queue={total_queue:.0f}, "
                     f"total_wait={total_wait:.1f}, "
                     f"arrived={arrived_interval}"
                 )
@@ -2098,6 +2254,20 @@ def main():
         help="How often to print watched-intersection metrics.",
     )
 
+    parser.add_argument(
+        "--n-envs",
+        type=int,
+        default=1,
+        help="Number of parallel SUMO training environments. Use 4 or 8 for parallel training.",
+    )
+
+    parser.add_argument(
+        "--device",
+        default=DEFAULT_DEVICE,
+        choices=["auto", "cpu", "cuda"],
+        help="PyTorch device for MaskablePPO. Use cuda on a GPU machine.",
+    )
+
     args = parser.parse_args()
 
     if args.mode == "generate-routes":
@@ -2118,6 +2288,8 @@ def main():
             gui=args.gui,
             randomize_traffic=not args.fixed_traffic,
             fresh=args.fresh,
+            n_envs=args.n_envs,
+            device=args.device,
         )
 
     elif args.mode == "run-all":
@@ -2126,6 +2298,7 @@ def main():
             gui=not args.nogui,
             watch_tls=args.watch_tls,
             watch_every=args.watch_every,
+            device=args.device,
         )
 
 
