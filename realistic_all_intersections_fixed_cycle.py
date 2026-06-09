@@ -1338,15 +1338,12 @@ def choose_uncontrolled_successor(
 
     if available and turn_counts is not None:
         # Pick a movement group honouring TURN_PROBABILITIES.
-     
-            
         group = choose_turn_group(
             rng=rng,
             available_groups=available,
             turn_counts=turn_counts,
             strict_split=True,
         )
-        
         if group is not None:
             candidates = available[group]
             weights = [
@@ -1363,7 +1360,7 @@ def choose_uncontrolled_successor(
             chosen = weighted_choice(rng, candidates, weights)
             turn_counts[group] += 1
             return chosen
-    
+
     # Fallback: weight all successors (including unclassified) normally.
     candidates = [s for s in successors if s != previous_edge] or list(successors)
     weights = [
@@ -1930,7 +1927,6 @@ def run_simulation(args):
         *QUIET_SUMO_ARGS,
     ]
 
-
     print()
     print("Starting realistic random-driving fixed-cycle simulation:")
     print(" ".join(sumo_cmd))
@@ -1956,19 +1952,17 @@ def run_simulation(args):
         print(f"  largest loop-safe core edges:             {len(core_edges)}")
         print(f"  total raw outgoing choices:               {sum(len(v) for v in raw_graph.values())}")
 
+        # Use all main/connector roads in raw_graph for spawning — not just
+        # the 113-edge loop-safe core — so cars start spread across the
+        # whole network instead of clustering at a handful of edges.
         main_start_edges = [
             edge_id
-            for edge_id in core_edges
-            if edge_id in raw_graph
-            and edge_category(edge_id, edge_metadata) in {"main", "connector"}
+            for edge_id in raw_graph
+            if edge_category(edge_id, edge_metadata) in {"main", "connector"}
         ]
 
         if len(main_start_edges) < 10:
-            main_start_edges = [
-                edge_id
-                for edge_id in core_edges
-                if edge_id in raw_graph
-            ]
+            main_start_edges = list(raw_graph.keys())
 
         if not main_start_edges:
             raise RuntimeError("No valid start edges were found.")
