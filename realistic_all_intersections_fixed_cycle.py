@@ -7,6 +7,7 @@ import sys
 import time
 import traceback
 from collections import Counter, defaultdict
+from functools import lru_cache
 from xml.sax.saxutils import quoteattr
 
 # ============================================================
@@ -62,8 +63,9 @@ ROUTE_FILE = os.path.join(BASE_DIR, "random_drive_dynamic_turns.rou.xml")
 # Constants
 # ============================================================
 
-STEP_LENGTH = 0.5
+STEP_LENGTH = 1.0
 DECISION_INTERVAL = 5.0
+SIGNAL_UPDATE_INTERVAL = 2.0
 
 T_YELLOW = 4.0
 T_ALL_RED = 2.0
@@ -71,7 +73,7 @@ T_ALL_RED = 2.0
 REQUIRED_EXIT_GAP = 14.0
 QUEUE_SPEED_THRESHOLD = 0.1
 
-MAX_ACTIVE_VEHICLE_CAP = 1500
+MAX_ACTIVE_VEHICLE_CAP = 750
 DEFAULT_SIM_END = 1_000_000_000.0
 
 CAR_LENGTH = 4.8
@@ -85,6 +87,29 @@ TURN_PROBABILITIES = {
 }
 
 MOVEMENT_ORDER = ["S", "R", "L"]
+
+# Runtime lane preference helper. This does not change signal timing or routing.
+# It only nudges straight-moving vehicles out of shared right/straight lanes
+# when a dedicated straight lane exists on the same incoming edge.
+TURN_LANE_CHANGE_DURATION = 12.0
+# Do not request lane changes when cars are already queued near the stop line.
+# Late forced lane changes are one common cause of the two-sided jams shown in SUMO.
+LANE_PREF_MIN_DISTANCE_TO_END = 25.0
+LANE_PREF_MIN_SPEED = 0.2
+LANE_PREF_MAX_WAITING_TIME = 10.0
+LANE_PREF_INTERVAL = 1.0
+TURN_LANE_PREFERENCE_INDEX = {}
+
+# Universal keep-clear / right-of-way safety gate.
+# This is enforced at the vehicle level, not by flickering traffic lights.
+# Cars approaching any junction, signalized or unsignalized, are held before
+# the junction when their next edge or internal junction path is not clear.
+KEEP_CLEAR_HELD_VEHICLES = set()
+KEEP_CLEAR_LOOKAHEAD_DISTANCE = 12.0
+KEEP_CLEAR_STOP_BUFFER = 6.0
+KEEP_CLEAR_EXIT_GAP = CAR_LENGTH + CAR_MIN_GAP + 1.5
+KEEP_CLEAR_INTERNAL_QUEUE_SPEED = 0.2
+KEEP_CLEAR_INTERNAL_MAX_VEHICLES = 99
 
 MOVEMENT_LABELS = [
     "NB-L", "NB-S", "NB-R",
@@ -128,8 +153,6 @@ def ensure_xquartz():
     if sys.platform != "darwin":
         return
 
-    os.environ.setdefault("DISPLAY", ":0")
-
     try:
         import subprocess
 
@@ -140,8 +163,24 @@ def ensure_xquartz():
             check=False,
         )
         time.sleep(2)
+
+        result = subprocess.run(
+            ["launchctl", "getenv", "DISPLAY"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+        display_value = result.stdout.strip()
+
+        if display_value:
+            os.environ["DISPLAY"] = display_value
+            print(f"Using XQuartz DISPLAY={display_value}")
+        elif "DISPLAY" not in os.environ:
+            print("WARNING: XQuartz DISPLAY is not set. GUI mode may fail until XQuartz is opened.")
+
     except Exception as exc:
-        print(f"Warning: could not open XQuartz automatically: {exc}")
+        print(f"Warning: could not configure XQuartz automatically: {exc}")
 
 
 def lane_to_edge(lane_id):
@@ -152,6 +191,250 @@ def lane_to_edge(lane_id):
         return lane_id
 
     return lane_id.rsplit("_", 1)[0]
+
+
+
+@lru_cache(maxsize=20000)
+def cached_lane_length(lane_id):
+    try:
+        return traci.lane.getLength(lane_id)
+    except traci.TraCIException:
+        return 0.0
+
+
+@lru_cache(maxsize=20000)
+def cached_edge_lanes(edge_id):
+    try:
+        lane_count = traci.edge.getLaneNumber(edge_id)
+    except traci.TraCIException:
+        return tuple()
+
+    return tuple(f"{edge_id}_{lane_index}" for lane_index in range(lane_count))
+
+
+def safe_vehicle_set_speed(veh_id, speed):
+    try:
+        traci.vehicle.setSpeed(veh_id, speed)
+        return True
+    except traci.TraCIException:
+        return False
+
+
+def release_keep_clear_vehicle(veh_id):
+    if veh_id not in KEEP_CLEAR_HELD_VEHICLES:
+        return False
+
+    if safe_vehicle_set_speed(veh_id, -1):
+        KEEP_CLEAR_HELD_VEHICLES.discard(veh_id)
+        return True
+
+    KEEP_CLEAR_HELD_VEHICLES.discard(veh_id)
+    return False
+
+
+def hold_vehicle_before_junction(veh_id):
+    if safe_vehicle_set_speed(veh_id, 0.0):
+        KEEP_CLEAR_HELD_VEHICLES.add(veh_id)
+        return True
+    return False
+
+
+def planned_next_edge_from_route(veh_id, current_edge):
+    try:
+        route = list(traci.vehicle.getRoute(veh_id))
+        route_index = traci.vehicle.getRouteIndex(veh_id)
+    except traci.TraCIException:
+        return None
+
+    if route_index < 0 or route_index >= len(route):
+        return None
+
+    if route[route_index] != current_edge:
+        try:
+            route_index = route.index(current_edge)
+        except ValueError:
+            return None
+
+    if route_index + 1 >= len(route):
+        return None
+
+    return route[route_index + 1]
+
+
+def next_edge_has_exit_space(next_edge):
+    lanes = cached_edge_lanes(next_edge)
+
+    if not lanes:
+        return True
+
+    # A car should be allowed to enter the junction only if at least one lane
+    # on the next edge has enough empty space immediately after the junction.
+    for lane_id in lanes:
+        try:
+            veh_ids = traci.lane.getLastStepVehicleIDs(lane_id)
+        except traci.TraCIException:
+            continue
+
+        if not veh_ids:
+            return True
+
+        closest_to_start = None
+        for other_id in veh_ids:
+            try:
+                pos = traci.vehicle.getLanePosition(other_id)
+            except traci.TraCIException:
+                continue
+
+            if closest_to_start is None or pos < closest_to_start:
+                closest_to_start = pos
+
+        if closest_to_start is None or closest_to_start >= KEEP_CLEAR_EXIT_GAP:
+            return True
+
+    return False
+
+
+@lru_cache(maxsize=20000)
+def get_lane_links(lane_id):
+    """Return SUMO lane-link tuples for a lane.
+
+    The keep-clear code uses this to find the internal/via lane between
+    the current lane and the next edge.  Some SUMO/TraCI versions support
+    extended=True and some do not, so this helper handles both cases.
+    """
+    try:
+        try:
+            return tuple(traci.lane.getLinks(lane_id, extended=True))
+        except TypeError:
+            return tuple(traci.lane.getLinks(lane_id))
+    except traci.TraCIException:
+        return tuple()
+
+
+def internal_lanes_for_link(current_lane, next_edge):
+    internal_lanes = []
+
+    for link in get_lane_links(current_lane):
+        if not link:
+            continue
+
+        to_lane = link[0]
+        to_edge = lane_to_edge(to_lane)
+
+        if to_edge != next_edge:
+            continue
+
+        # Extended TraCI lane links usually expose the internal/via lane at
+        # index 4: (toLane, hasPrio, isOpen, hasFoe, viaLane, state, dir, len).
+        if len(link) > 4 and isinstance(link[4], str) and link[4]:
+            internal_lanes.append(link[4])
+
+    return internal_lanes
+
+
+def internal_junction_path_is_clear(current_lane, next_edge):
+    internal_lanes = internal_lanes_for_link(current_lane, next_edge)
+
+    if not internal_lanes:
+        return True
+
+    for internal_lane in internal_lanes:
+        try:
+            veh_ids = traci.lane.getLastStepVehicleIDs(internal_lane)
+        except traci.TraCIException:
+            continue
+
+        # Do not block the next car merely because another car is moving through
+        # the internal junction lane. That created very slow start-up waves.
+        # Only hold vehicles when the internal path contains a stopped/near-stopped
+        # vehicle or is truly packed.
+        if len(veh_ids) > KEEP_CLEAR_INTERNAL_MAX_VEHICLES:
+            return False
+
+        for other_id in veh_ids:
+            try:
+                if traci.vehicle.getSpeed(other_id) <= KEEP_CLEAR_INTERNAL_QUEUE_SPEED:
+                    return False
+            except traci.TraCIException:
+                continue
+
+    return True
+
+
+def should_hold_for_keep_clear(veh_id):
+    try:
+        lane_id = traci.vehicle.getLaneID(veh_id)
+    except traci.TraCIException:
+        return False
+
+    current_edge = lane_to_edge(lane_id)
+
+    # Do not intervene once the vehicle is already inside an internal junction
+    # lane. The whole point is to stop it before this point.
+    if current_edge is None or lane_id.startswith(":") or current_edge.startswith(":"):
+        return False
+
+    lane_len = cached_lane_length(lane_id)
+    if lane_len <= 0:
+        return False
+
+    try:
+        lane_pos = traci.vehicle.getLanePosition(veh_id)
+    except traci.TraCIException:
+        return False
+
+    distance_to_junction = lane_len - lane_pos
+
+    # Only check cars that are close enough to actually enter the next junction.
+    if distance_to_junction > KEEP_CLEAR_LOOKAHEAD_DISTANCE:
+        return False
+
+    next_edge = planned_next_edge_from_route(veh_id, current_edge)
+
+    if next_edge is None or next_edge.startswith(":"):
+        return False
+
+    if not next_edge_has_exit_space(next_edge):
+        return True
+
+    if not internal_junction_path_is_clear(lane_id, next_edge):
+        return True
+
+    return False
+
+
+def apply_keep_clear_and_right_of_way_to_vehicle(veh_id):
+    try:
+        lane_id = traci.vehicle.getLaneID(veh_id)
+    except traci.TraCIException:
+        KEEP_CLEAR_HELD_VEHICLES.discard(veh_id)
+        return False
+
+    if lane_id.startswith(":"):
+        KEEP_CLEAR_HELD_VEHICLES.discard(veh_id)
+        return False
+
+    if should_hold_for_keep_clear(veh_id):
+        return hold_vehicle_before_junction(veh_id)
+
+    release_keep_clear_vehicle(veh_id)
+    return False
+
+
+def apply_keep_clear_and_right_of_way_to_all_vehicles():
+    held_count = 0
+    active_ids = set(traci.vehicle.getIDList())
+
+    # Release/delete stale held IDs first.
+    for veh_id in list(KEEP_CLEAR_HELD_VEHICLES):
+        if veh_id not in active_ids:
+            KEEP_CLEAR_HELD_VEHICLES.discard(veh_id)
+
+    for veh_id in active_ids:
+        if apply_keep_clear_and_right_of_way_to_vehicle(veh_id):
+            held_count += 1
+
+    return held_count
 
 
 def weighted_choice(rng, items, weights):
@@ -247,6 +530,8 @@ def build_edge_metadata(valid_edges):
             "priority": 0,
             "category": "unknown",
             "base_weight": 1.0,
+            "x": 0.0,
+            "y": 0.0,
         }
 
     if sumolib is not None:
@@ -279,12 +564,24 @@ def build_edge_metadata(valid_edges):
                 except Exception:
                     priority = 0
 
+                try:
+                    shape = edge.getShape()
+                    if shape:
+                        x = sum(point[0] for point in shape) / len(shape)
+                        y = sum(point[1] for point in shape) / len(shape)
+                    else:
+                        x = y = 0.0
+                except Exception:
+                    x = y = 0.0
+
                 metadata[edge_id].update(
                     {
                         "type": edge_type,
                         "speed": speed,
                         "lanes": lanes,
                         "priority": priority,
+                        "x": x,
+                        "y": y,
                     }
                 )
 
@@ -300,13 +597,19 @@ def build_edge_metadata(valid_edges):
                 item["lanes"] = max(1, lane_count)
 
                 speeds = []
+                points = []
 
                 for lane_index in range(lane_count):
                     lane_id = f"{edge_id}_{lane_index}"
                     speeds.append(traci.lane.getMaxSpeed(lane_id))
+                    points.extend(traci.lane.getShape(lane_id))
 
                 if speeds:
                     item["speed"] = max(speeds)
+
+                if points and item.get("x", 0.0) == 0.0 and item.get("y", 0.0) == 0.0:
+                    item["x"] = sum(point[0] for point in points) / len(points)
+                    item["y"] = sum(point[1] for point in points) / len(points)
 
             except traci.TraCIException:
                 pass
@@ -366,6 +669,81 @@ def edge_base_weight(edge_id, edge_metadata):
     return edge_metadata.get(edge_id, {}).get("base_weight", 1.0)
 
 
+def edge_xy(edge_id, edge_metadata):
+    item = edge_metadata.get(edge_id, {})
+    return float(item.get("x", 0.0)), float(item.get("y", 0.0))
+
+
+def build_spawn_zones(start_edges, edge_metadata, grid_size):
+    """Split start edges into geographic zones so spawning covers the whole map.
+
+    This prevents all cars from being created on whichever arterial happens to
+    have the highest edge weight. Spawning later cycles through these zones in
+    round-robin order.
+    """
+    if not start_edges:
+        return []
+
+    grid_size = max(1, int(grid_size))
+
+    xs = [edge_xy(edge_id, edge_metadata)[0] for edge_id in start_edges]
+    ys = [edge_xy(edge_id, edge_metadata)[1] for edge_id in start_edges]
+
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    width = max(max_x - min_x, 1.0)
+    height = max(max_y - min_y, 1.0)
+
+    zones = defaultdict(list)
+
+    for edge_id in start_edges:
+        x, y = edge_xy(edge_id, edge_metadata)
+        gx = min(grid_size - 1, max(0, int((x - min_x) / width * grid_size)))
+        gy = min(grid_size - 1, max(0, int((y - min_y) / height * grid_size)))
+        zones[(gx, gy)].append(edge_id)
+
+    zone_list = [
+        {"id": zone_id, "edges": sorted(edges)}
+        for zone_id, edges in sorted(zones.items())
+        if edges
+    ]
+
+    print()
+    print("Spawn zones:")
+    print(f"  zones used:      {len(zone_list)}")
+    print(f"  grid size:       {grid_size} x {grid_size}")
+    print(f"  candidate edges: {len(start_edges)}")
+
+    return zone_list
+
+
+def choose_spawn_edge(sim_state, start_edges_or_zones, edge_metadata, rng):
+    """Choose spawn edge with zone balancing if zones are provided.
+
+    start_edges_or_zones may be either:
+      - a flat list of edge IDs, or
+      - a list of {id, edges} zone dictionaries.
+    """
+    if not start_edges_or_zones:
+        return None
+
+    first = start_edges_or_zones[0]
+
+    if isinstance(first, dict):
+        zone_index = sim_state.get("next_spawn_zone_index", 0) % len(start_edges_or_zones)
+        sim_state["next_spawn_zone_index"] = zone_index + 1
+        zone = start_edges_or_zones[zone_index]
+        edges = zone["edges"]
+    else:
+        edges = start_edges_or_zones
+
+    return weighted_choice(
+        rng,
+        edges,
+        [edge_base_weight(edge_id, edge_metadata) for edge_id in edges],
+    )
+
+
 def successor_weight(
     current_edge,
     next_edge,
@@ -421,10 +799,10 @@ def write_empty_route_file(route_file):
            maxSpeed="13.9"
            sigma="0.5"
            tau="1.0"
-           lcStrategic="35.0"
+           lcStrategic="80.0"
            lcCooperative="1.0"
            lcSpeedGain="0.03"
-           lcKeepRight="0.15"
+           lcKeepRight="0.0"
            lcAssertive="0.45"
            jmIgnoreKeepClearTime="-1"
            jmDriveAfterYellowTime="-1"
@@ -983,6 +1361,7 @@ def build_controller_for_tls(tls_id, rng, activate=True):
         "next_phase_pos": None,
         "disabled": False,
         "green_duration": 30.0,
+        "last_signal_update": -1e9,
     }
 
     safe, _ = verify_controller_safety(tls_id, controller)
@@ -1008,7 +1387,7 @@ def start_green(controller, phase_pos=None):
         controller["state_length"],
         controller["movement_map"],
         phase["rules"],
-        check_space=True,
+        check_space=False,
     )
 
     traci.trafficlight.setRedYellowGreenState(
@@ -1021,6 +1400,7 @@ def start_green(controller, phase_pos=None):
     controller["phase_elapsed"] = 0.0
     controller["last_active_indices"] = active_indices
     controller["next_phase_pos"] = None
+    controller["last_signal_update"] = traci.simulation.getTime()
 
 
 def update_green(controller):
@@ -1030,7 +1410,7 @@ def update_green(controller):
         controller["state_length"],
         controller["movement_map"],
         phase["rules"],
-        check_space=True,
+        check_space=False,
     )
 
     traci.trafficlight.setRedYellowGreenState(
@@ -1091,8 +1471,16 @@ def switch_next_fixed_phase(controller):
 
 def update_controller_after_simstep(controller):
     try:
+        sim_time = traci.simulation.getTime()
+
         if controller["mode"] == "green":
-            update_green(controller)
+            # Do not resend the exact same green state every simulation step.
+            # This saves many TraCI calls and also preserves the no-flicker behavior:
+            # the signal stays green for the phase, while vehicles obey SUMO keep-clear logic.
+            if sim_time - controller.get("last_signal_update", -1e9) >= SIGNAL_UPDATE_INTERVAL:
+                update_green(controller)
+                controller["last_signal_update"] = sim_time
+
             controller["phase_elapsed"] += STEP_LENGTH
 
         elif controller["mode"] == "yellow":
@@ -1220,6 +1608,315 @@ def build_turn_decision_index(controllers, raw_graph):
     return index
 
 
+def lane_index_from_lane_id(lane_id):
+    """Return SUMO lane index from a lane id like edge_2."""
+    if not lane_id or "_" not in lane_id:
+        return None
+
+    try:
+        return int(lane_id.rsplit("_", 1)[1])
+    except ValueError:
+        return None
+
+
+def build_turn_lane_preference_index(controllers):
+    """
+    Build per-incoming-edge lane-choice information for controlled intersections.
+
+    Purpose:
+      If a straight-going car is sitting in a lane that can also turn right,
+      and the same incoming edge has a dedicated straight-only lane, nudge the
+      straight-going car into the straight-only lane. This keeps right-turning
+      cars from being trapped behind straight cars waiting for the straight phase.
+
+    This does NOT change the traffic-light logic or the car's route.
+    """
+    index = defaultdict(lambda: {
+        "edge_to_movement": {},
+        "edge_to_lanes": defaultdict(lambda: defaultdict(set)),
+        "movement_to_lanes": defaultdict(set),
+        "lane_to_movements": defaultdict(set),
+    })
+
+    for controller in controllers:
+        tls_id = controller["tls_id"]
+
+        try:
+            controlled_links = traci.trafficlight.getControlledLinks(tls_id)
+        except traci.TraCIException:
+            continue
+
+        for signal_links in controlled_links:
+            for link in signal_links:
+                if len(link) < 2:
+                    continue
+
+                in_lane = link[0]
+                out_lane = link[1]
+
+                if not in_lane or not out_lane:
+                    continue
+
+                incoming_edge = lane_to_edge(in_lane)
+                outgoing_edge = lane_to_edge(out_lane)
+
+                if incoming_edge is None or outgoing_edge is None:
+                    continue
+
+                label = classify_connection(in_lane, out_lane)
+
+                if not label or "-" not in label:
+                    continue
+
+                movement = label.split("-")[-1]
+
+                if movement not in TURN_PROBABILITIES:
+                    continue
+
+                item = index[incoming_edge]
+
+                # If SUMO exposes multiple lane links to the same outgoing edge,
+                # prefer S when any straight connection exists; otherwise keep the
+                # first normal movement seen. This avoids misclassifying shared
+                # through connections as only right/left.
+                if outgoing_edge not in item["edge_to_movement"]:
+                    item["edge_to_movement"][outgoing_edge] = movement
+                elif movement == "S":
+                    item["edge_to_movement"][outgoing_edge] = "S"
+
+                item["edge_to_lanes"][outgoing_edge][movement].add(in_lane)
+                item["movement_to_lanes"][movement].add(in_lane)
+                item["lane_to_movements"][in_lane].add(movement)
+
+    incoming_edges = len(index)
+    straight_only_edges = 0
+    shared_right_straight_edges = 0
+
+    for item in index.values():
+        lane_to_movements = item["lane_to_movements"]
+        has_straight_only = any(movements == {"S"} for movements in lane_to_movements.values())
+        has_shared_right_straight = any({"S", "R"}.issubset(movements) for movements in lane_to_movements.values())
+
+        if has_straight_only:
+            straight_only_edges += 1
+        if has_shared_right_straight:
+            shared_right_straight_edges += 1
+
+    print()
+    print("Turn-lane preference index:")
+    print(f"  controlled incoming edges indexed:        {incoming_edges}")
+    print(f"  edges with straight-only lane options:    {straight_only_edges}")
+    print(f"  edges with shared right/straight lanes:   {shared_right_straight_edges}")
+
+    return index
+
+
+def target_lanes_for_movement(lane_info, outgoing_edge, movement):
+    """Return preferred lane ids for a planned movement."""
+    edge_to_lanes = lane_info["edge_to_lanes"]
+    movement_to_lanes = lane_info["movement_to_lanes"]
+    lane_to_movements = lane_info["lane_to_movements"]
+
+    specific_lanes = set(edge_to_lanes.get(outgoing_edge, {}).get(movement, set()))
+    movement_lanes = set(movement_to_lanes.get(movement, set()))
+    candidates = specific_lanes or movement_lanes
+
+    if not candidates:
+        return []
+
+    def movements_for(lane_id):
+        return set(lane_to_movements.get(lane_id, set()))
+
+    if movement == "S":
+        # Best case: true straight-only lanes. This is the main fix.
+        straight_only = [lane for lane in candidates if movements_for(lane) == {"S"}]
+        if straight_only:
+            return sorted(straight_only)
+
+        # Next best: lanes that allow straight but do not also allow right.
+        no_right = [lane for lane in candidates if "S" in movements_for(lane) and "R" not in movements_for(lane)]
+        if no_right:
+            return sorted(no_right)
+
+        return sorted(candidates)
+
+    if movement == "R":
+        right_only = [lane for lane in candidates if movements_for(lane) == {"R"}]
+        if right_only:
+            return sorted(right_only)
+        return sorted(candidates)
+
+    if movement == "L":
+        left_only = [lane for lane in candidates if movements_for(lane) == {"L"}]
+        if left_only:
+            return sorted(left_only)
+        return sorted(candidates)
+
+    return sorted(candidates)
+
+
+def choose_best_target_lane(candidate_lanes, current_lane_index):
+    """Pick a target lane that is nearby and not obviously packed."""
+    scored = []
+
+    for lane_id in candidate_lanes:
+        lane_index = lane_index_from_lane_id(lane_id)
+
+        if lane_index is None:
+            continue
+
+        try:
+            veh_count = traci.lane.getLastStepVehicleNumber(lane_id)
+            halting = traci.lane.getLastStepHaltingNumber(lane_id)
+        except traci.TraCIException:
+            veh_count = 0
+            halting = 0
+
+        distance = abs(lane_index - current_lane_index) if current_lane_index is not None else 0
+        scored.append((halting, veh_count, distance, lane_index, lane_id))
+
+    if not scored:
+        return None
+
+    scored.sort()
+    return scored[0][3]
+
+
+def planned_next_edge_for_vehicle(veh_id, current_edge):
+    try:
+        route = list(traci.vehicle.getRoute(veh_id))
+        route_index = traci.vehicle.getRouteIndex(veh_id)
+    except traci.TraCIException:
+        return None
+
+    if route_index < 0 or route_index >= len(route):
+        return None
+
+    if route[route_index] != current_edge:
+        try:
+            route_index = route.index(current_edge)
+        except ValueError:
+            return None
+
+    if route_index + 1 >= len(route):
+        return None
+
+    return route[route_index + 1]
+
+
+def apply_turn_lane_preference_to_vehicle(veh_id):
+    """
+    Nudge vehicles into better approach lanes without changing routes/signals.
+
+    Most important case:
+      - planned movement is straight
+      - current lane is shared right+straight
+      - another lane on this same incoming edge is straight-only
+
+    Then we request a lane change to the straight-only lane, so right-turning
+    vehicles are less likely to be blocked by straight-through vehicles.
+    """
+    if not TURN_LANE_PREFERENCE_INDEX:
+        return False
+
+    try:
+        lane_id = traci.vehicle.getLaneID(veh_id)
+        speed = traci.vehicle.getSpeed(veh_id)
+        waiting_time = traci.vehicle.getWaitingTime(veh_id)
+        lane_pos = traci.vehicle.getLanePosition(veh_id)
+        lane_len = traci.lane.getLength(lane_id)
+    except traci.TraCIException:
+        return False
+
+    # Only do lane preference while the car is still moving and far enough
+    # upstream. If the vehicle is already queued near the intersection, forcing
+    # a lane change can block both lanes and create the deadlock seen in the GUI.
+    distance_to_end = lane_len - lane_pos
+    if speed < LANE_PREF_MIN_SPEED:
+        return False
+    if waiting_time > LANE_PREF_MAX_WAITING_TIME:
+        return False
+    if distance_to_end < LANE_PREF_MIN_DISTANCE_TO_END:
+        return False
+
+    current_edge = lane_to_edge(lane_id)
+
+    if current_edge is None:
+        return False
+
+    lane_info = TURN_LANE_PREFERENCE_INDEX.get(current_edge)
+
+    if not lane_info:
+        return False
+
+    outgoing_edge = planned_next_edge_for_vehicle(veh_id, current_edge)
+
+    if outgoing_edge is None:
+        return False
+
+    movement = lane_info["edge_to_movement"].get(outgoing_edge)
+
+    if movement not in TURN_PROBABILITIES:
+        return False
+
+    lane_to_movements = lane_info["lane_to_movements"]
+    current_movements = set(lane_to_movements.get(lane_id, set()))
+    preferred_lanes = target_lanes_for_movement(lane_info, outgoing_edge, movement)
+
+    if not preferred_lanes:
+        return False
+
+    # If the current lane is already one of the preferred lanes, do nothing.
+    if lane_id in preferred_lanes:
+        return False
+
+    # Avoid unnecessary lane changes. For straight vehicles, only force the
+    # change when a better straight-only/no-right lane exists. For right/left,
+    # only force if the current lane does not support that movement.
+    if movement == "S":
+        current_is_shared_right_straight = "S" in current_movements and "R" in current_movements
+        current_supports_straight = "S" in current_movements
+        preferred_has_true_straight_lane = any(
+            set(lane_to_movements.get(lane, set())) == {"S"}
+            for lane in preferred_lanes
+        )
+
+        if current_supports_straight and not current_is_shared_right_straight:
+            return False
+
+        if current_supports_straight and not preferred_has_true_straight_lane:
+            return False
+
+    elif movement in {"R", "L"}:
+        if movement in current_movements:
+            return False
+
+    current_lane_index = lane_index_from_lane_id(lane_id)
+    target_lane_index = choose_best_target_lane(preferred_lanes, current_lane_index)
+
+    if target_lane_index is None or target_lane_index == current_lane_index:
+        return False
+
+    try:
+        traci.vehicle.changeLane(veh_id, target_lane_index, TURN_LANE_CHANGE_DURATION)
+        return True
+    except traci.TraCIException:
+        return False
+
+
+def apply_turn_lane_preference_to_all_vehicles():
+    changed = 0
+
+    if not TURN_LANE_PREFERENCE_INDEX:
+        return changed
+
+    for veh_id in list(traci.vehicle.getIDList()):
+        if apply_turn_lane_preference_to_vehicle(veh_id):
+            changed += 1
+
+    return changed
+
+
 def choose_turn_group(rng, available_groups, turn_counts, strict_split=True):
     groups = [
         group
@@ -1267,6 +1964,7 @@ def choose_turn_group(rng, available_groups, turn_counts, strict_split=True):
 # Random-walk route generation
 # ============================================================
 
+@lru_cache(maxsize=None)
 def classify_edge_successor_movement(current_edge, next_edge):
     """
     Classify next_edge as S/L/R relative to current_edge.
@@ -1338,12 +2036,15 @@ def choose_uncontrolled_successor(
 
     if available and turn_counts is not None:
         # Pick a movement group honouring TURN_PROBABILITIES.
+     
+            
         group = choose_turn_group(
             rng=rng,
             available_groups=available,
             turn_counts=turn_counts,
             strict_split=True,
         )
+        
         if group is not None:
             candidates = available[group]
             weights = [
@@ -1360,7 +2061,7 @@ def choose_uncontrolled_successor(
             chosen = weighted_choice(rng, candidates, weights)
             turn_counts[group] += 1
             return chosen
-
+    
     # Fallback: weight all successors (including unclassified) normally.
     candidates = [s for s in successors if s != previous_edge] or list(successors)
     weights = [
@@ -1678,11 +2379,15 @@ def spawn_vehicle(
     args,
 ):
     for _ in range(args.spawn_attempts):
-        start_edge = weighted_choice(
-            rng,
-            start_edges,
-            [edge_base_weight(edge_id, edge_metadata) for edge_id in start_edges],
+        start_edge = choose_spawn_edge(
+            sim_state=sim_state,
+            start_edges_or_zones=start_edges,
+            edge_metadata=edge_metadata,
+            rng=rng,
         )
+
+        if start_edge is None:
+            continue
 
         route_edges = build_random_walk_route(
             start_edge=start_edge,
@@ -1856,41 +2561,63 @@ def run_simulation_steps(
     extended_total = 0
     recovered_total = 0
 
+    # Expensive Python/TraCI work happens once per DECISION_INTERVAL, not once per SUMO step.
+    # This keeps the same broad multi-region behavior while avoiding a full vehicle scan
+    # every 0.5/1.0 simulation seconds.
+    if traci.vehicle.getIDCount() < args.target_vehicles:
+        spawned_total += fill_vehicle_population(
+            sim_state=sim_state,
+            target_count=args.target_vehicles,
+            max_to_spawn=args.spawn_batch,
+            start_edges=start_edges,
+            turn_index=turn_index,
+            raw_graph=raw_graph,
+            edge_metadata=edge_metadata,
+            core_edges=core_edges,
+            rng=rng,
+            turn_counts=turn_counts,
+            args=args,
+        )
+
+    for veh_id in list(traci.vehicle.getIDList()):
+        extended, recovered = extend_vehicle_route(
+            veh_id=veh_id,
+            min_remaining_edges=args.min_remaining_edges,
+            lookahead_edges=args.route_lookahead_edges,
+            turn_index=turn_index,
+            raw_graph=raw_graph,
+            edge_metadata=edge_metadata,
+            core_edges=core_edges,
+            rng=rng,
+            turn_counts=turn_counts,
+            args=args,
+        )
+
+        if extended:
+            extended_total += 1
+
+        if recovered:
+            recovered_total += 1
+
+        # Keep straight-through vehicles out of shared right/straight lanes
+        # whenever a dedicated straight lane exists on the same approach.
+        apply_turn_lane_preference_to_vehicle(veh_id)
+
     for _ in range(num_steps):
-        if traci.vehicle.getIDCount() < args.target_vehicles:
-            spawned_total += fill_vehicle_population(
-                sim_state=sim_state,
-                target_count=args.target_vehicles,
-                max_to_spawn=args.spawn_batch,
-                start_edges=start_edges,
-                turn_index=turn_index,
-                raw_graph=raw_graph,
-                edge_metadata=edge_metadata,
-                core_edges=core_edges,
-                rng=rng,
-                turn_counts=turn_counts,
-                args=args,
-            )
+        sim_time = traci.simulation.getTime()
 
-        for veh_id in list(traci.vehicle.getIDList()):
-            extended, recovered = extend_vehicle_route(
-                veh_id=veh_id,
-                min_remaining_edges=args.min_remaining_edges,
-                lookahead_edges=args.route_lookahead_edges,
-                turn_index=turn_index,
-                raw_graph=raw_graph,
-                edge_metadata=edge_metadata,
-                core_edges=core_edges,
-                rng=rng,
-                turn_counts=turn_counts,
-                args=args,
-            )
+        # Lane preference must run more often than route extension. Otherwise a
+        # straight vehicle can enter a shared right/straight lane and remain
+        # there until it is too late to move.
+        if sim_time >= sim_state.get("next_lane_pref_time", 0.0):
+            apply_turn_lane_preference_to_all_vehicles()
+            sim_state["next_lane_pref_time"] = sim_time + LANE_PREF_INTERVAL
 
-            if extended:
-                extended_total += 1
-
-            if recovered:
-                recovered_total += 1
+        # Vehicle-level keep-clear / right-of-way gate.
+        # Lights stay green according to the fixed cycle; cars decide whether
+        # they have enough downstream space to enter the junction. This applies
+        # to both signalized and unsignalized intersections.
+        apply_keep_clear_and_right_of_way_to_all_vehicles()
 
         traci.simulationStep()
         arrived += traci.simulation.getArrivedNumber()
@@ -1944,37 +2671,57 @@ def run_simulation(args):
         valid_edges = get_valid_passenger_edges()
         edge_metadata = build_edge_metadata(valid_edges)
         raw_graph = build_raw_successor_graph(valid_edges)
-        core_edges = largest_loop_core(raw_graph)
+
+        # IMPORTANT: do not restrict routing/spawning to only largest_loop_core(raw_graph).
+        # On this map, that can be a small local subregion, which causes every car
+        # to pile up in one place. Use the full drivable graph as the routing core
+        # so vehicles can be spawned and recovered across the whole map.
+        largest_core_edges = largest_loop_core(raw_graph)
+        core_edges = set(raw_graph)
 
         print()
         print("Passenger successor graph:")
         print(f"  raw drivable edges with outgoing choices: {len(raw_graph)}")
-        print(f"  largest loop-safe core edges:             {len(core_edges)}")
+        print(f"  largest loop-safe core edges:             {len(largest_core_edges)}")
+        print(f"  global routing core edges used:           {len(core_edges)}")
         print(f"  total raw outgoing choices:               {sum(len(v) for v in raw_graph.values())}")
 
-        # Use all main/connector roads in raw_graph for spawning — not just
-        # the 113-edge loop-safe core — so cars start spread across the
-        # whole network instead of clustering at a handful of edges.
-        main_start_edges = [
+        # Spawn from all main/connector roads in the full graph, then balance by
+        # geographic zones. This is the main fix for the one-region problem.
+        main_start_edge_candidates = [
             edge_id
             for edge_id in raw_graph
             if edge_category(edge_id, edge_metadata) in {"main", "connector"}
         ]
 
-        if len(main_start_edges) < 10:
-            main_start_edges = list(raw_graph.keys())
+        if len(main_start_edge_candidates) < 10:
+            main_start_edge_candidates = list(raw_graph.keys())
+
+        if not main_start_edge_candidates:
+            raise RuntimeError("No valid start edges were found.")
+
+        main_start_edges = build_spawn_zones(
+            start_edges=main_start_edge_candidates,
+            edge_metadata=edge_metadata,
+            grid_size=args.spawn_grid_size,
+        )
 
         if not main_start_edges:
-            raise RuntimeError("No valid start edges were found.")
+            main_start_edges = main_start_edge_candidates
 
         turn_index = build_turn_decision_index(
             controllers=controllers,
             raw_graph=raw_graph,
         )
 
+        global TURN_LANE_PREFERENCE_INDEX
+        TURN_LANE_PREFERENCE_INDEX = build_turn_lane_preference_index(controllers)
+
         sim_state = {
             "next_vehicle_id": 0,
             "next_route_id": 0,
+            "next_spawn_zone_index": 0,
+            "next_lane_pref_time": 0.0,
         }
 
         initial_spawned = fill_vehicle_population(
@@ -1994,7 +2741,8 @@ def run_simulation(args):
         print()
         print(f"Controlled traffic lights: {len(controllers)}")
         print(f"Skipped traffic lights:    {len(skipped)}")
-        print(f"Main/connector start edges:{len(main_start_edges)}")
+        print(f"Main/connector start candidates: {len(main_start_edge_candidates)}")
+        print(f"Spawn zones used:                {len(main_start_edges) if main_start_edges and isinstance(main_start_edges[0], dict) else 0}")
         print(f"Initially spawned cars:    {initial_spawned}")
         print()
         print("Fixed phase rule:")
@@ -2015,7 +2763,8 @@ def run_simulation(args):
         print("Realism fixes:")
         print("  Main roads are preferred over residential/service roads.")
         print("  Residential-to-residential cruising is penalized.")
-        print("  Cars are recovered away from route endings/dead ends.")
+        print("  Cars are spawned across geographic zones covering the full map.")
+        print("  Cars are recovered to the full drivable graph, not one small core.")
         print("  Signal phases have randomized offsets and slight timing variation.")
         print("  Routes are planned far ahead to reduce last-second lane changes.")
         print()
@@ -2143,27 +2892,27 @@ def main():
         "--max-vehicles",
         type=int,
         default=MAX_ACTIVE_VEHICLE_CAP,
-        help="Hard-capped at 1500.",
+        help="Hard-capped at 750.",
     )
 
     parser.add_argument(
         "--target-vehicles",
         type=int,
-        default=1250,
+        default=650,
         help="The script tries to keep about this many active cars.",
     )
 
     parser.add_argument(
         "--initial-vehicles",
         type=int,
-        default=400,
+        default=200,
         help="Cars spawned immediately at the start.",
     )
 
     parser.add_argument(
         "--spawn-batch",
         type=int,
-        default=25,
+        default=12,
         help="Maximum cars to add per simulation step when below target.",
     )
 
@@ -2177,22 +2926,29 @@ def main():
     parser.add_argument(
         "--route-lookahead-edges",
         type=int,
-        default=120,
+        default=60,
         help="How many edges ahead each random-walk route is planned.",
     )
 
     parser.add_argument(
         "--min-remaining-edges",
         type=int,
-        default=50,
+        default=15,
         help="Extend a car's route when fewer than this many edges remain.",
     )
 
     parser.add_argument(
         "--recovery-attempts",
         type=int,
-        default=40,
+        default=20,
         help="Attempts to recover a vehicle back into the loop-safe driving core.",
+    )
+
+    parser.add_argument(
+        "--spawn-grid-size",
+        type=int,
+        default=6,
+        help="Geographic grid size used to spread vehicle spawning across the map.",
     )
 
     parser.add_argument(
@@ -2219,8 +2975,8 @@ def main():
     parser.add_argument(
         "--non-core-penalty",
         type=float,
-        default=0.20,
-        help="Penalty for leaving the loop-safe driving core.",
+        default=1.0,
+        help="Penalty for leaving the loop-safe driving core. Default 1.0 avoids pulling all cars into one region.",
     )
 
     parser.add_argument(
@@ -2235,12 +2991,12 @@ def main():
     parser.add_argument(
         "--time-to-teleport",
         type=int,
-        default=-1,
-        help="Default -1 disables teleporting so cars do not disappear.",
+        default=180,
+        help="Last-resort gridlock breaker. Use -1 to disable teleporting entirely.",
     )
 
     parser.add_argument("--green-duration", type=float, default=30.0)
-    parser.add_argument("--print-every", type=float, default=30.0)
+    parser.add_argument("--print-every", type=float, default=60.0)
 
     parser.add_argument(
         "--disable-strict-split",
