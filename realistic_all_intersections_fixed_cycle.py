@@ -1930,6 +1930,7 @@ def run_simulation(args):
         *QUIET_SUMO_ARGS,
     ]
 
+
     print()
     print("Starting realistic random-driving fixed-cycle simulation:")
     print(" ".join(sumo_cmd))
