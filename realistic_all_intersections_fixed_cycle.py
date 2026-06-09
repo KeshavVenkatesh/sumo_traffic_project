@@ -544,22 +544,28 @@ def get_sumo_link_direction(in_lane, out_lane):
         except TypeError:
             links = traci.lane.getLinks(in_lane)
 
+        # Actual tuple layout in SUMO 1.26:
+        #   (toLane, hasPriority, isOpen, hasFoe, viaLane, state, direction, length)
+        #     [0]      [1]          [2]    [3]      [4]     [5]      [6]       [7]
+        #
+        # Match on outgoing *edge* rather than exact lane — trafficlight.getControlledLinks
+        # and lane.getLinks sometimes disagree on which lane index represents the connection,
+        # causing exact-lane matches to fail even when the direction is clearly available.
+        out_edge = out_lane.rsplit("_", 1)[0] if "_" in out_lane else out_lane
+
         for link in links:
-            if not link:
+            if not link or len(link) < 7:
                 continue
 
             to_lane = link[0]
+            to_edge = to_lane.rsplit("_", 1)[0] if "_" in to_lane else to_lane
 
-            if to_lane != out_lane:
+            if to_edge != out_edge:
                 continue
 
-            # Direction is usually a one-character string such as s, r, l, or t.
-            for value in link[1:]:
-                if isinstance(value, str):
-                    movement = sumo_link_direction_to_movement(value)
-
-                    if movement is not None:
-                        return movement
+            movement = sumo_link_direction_to_movement(link[6])
+            if movement is not None:
+                return movement
 
         return None
 
@@ -1169,7 +1175,12 @@ def build_turn_decision_index(controllers, raw_graph):
                         if outgoing_edge is None:
                             continue
 
-                        if outgoing_edge not in allowed_edges:
+                        # For straight movements, allow outgoing edges that are
+                        # network boundary edges (not in raw_graph because they
+                        # have no further successors). Filtering them out was
+                        # the main cause of straight options being missing from
+                        # the index.
+                        if movement_group != "S" and outgoing_edge not in allowed_edges:
                             continue
 
                         if incoming_edge == outgoing_edge:
@@ -1181,6 +1192,7 @@ def build_turn_decision_index(controllers, raw_graph):
                             "incoming_edge": incoming_edge,
                             "outgoing_edge": outgoing_edge,
                         })
+
 
     total_edges = len(index)
     movement_option_counts = Counter()
@@ -1255,6 +1267,44 @@ def choose_turn_group(rng, available_groups, turn_counts, strict_split=True):
 # Random-walk route generation
 # ============================================================
 
+def classify_edge_successor_movement(current_edge, next_edge):
+    """
+    Classify next_edge as S/L/R relative to current_edge.
+
+    Uses SUMO's lane link direction (link[6]) which is reliable and fast.
+    Iterates all lanes of current_edge and checks every link to find one
+    whose toLane belongs to next_edge.
+    """
+    try:
+        lane_count = traci.edge.getLaneNumber(current_edge)
+    except traci.TraCIException:
+        return None
+
+    for lane_index in range(lane_count):
+        in_lane = f"{current_edge}_{lane_index}"
+        try:
+            try:
+                links = traci.lane.getLinks(in_lane, extended=True)
+            except TypeError:
+                links = traci.lane.getLinks(in_lane)
+        except traci.TraCIException:
+            continue
+
+        for link in links:
+            if not link or len(link) < 7:
+                continue
+            to_lane = link[0]
+            # toLane belongs to next_edge if its edge prefix matches
+            to_edge = to_lane.rsplit("_", 1)[0] if "_" in to_lane else to_lane
+            if to_edge != next_edge:
+                continue
+            movement = sumo_link_direction_to_movement(link[6])
+            if movement is not None:
+                return movement
+
+    return None
+
+
 def choose_uncontrolled_successor(
     current_edge,
     previous_edge,
@@ -1263,25 +1313,71 @@ def choose_uncontrolled_successor(
     core_edges,
     rng,
     args,
+    turn_counts=None,
 ):
     successors = raw_graph.get(current_edge, [])
 
     if not successors:
         return None
 
+    # Group successors by turn movement (S/L/R) using geometry.
+    groups = {"S": [], "L": [], "R": []}
+    unclassified = []
+
+    for successor in successors:
+        if successor == previous_edge:
+            continue
+        movement = classify_edge_successor_movement(current_edge, successor)
+        if movement in groups:
+            groups[movement].append(successor)
+        else:
+            unclassified.append(successor)
+
+    # Build available dict — only groups with options.
+    available = {g: edges for g, edges in groups.items() if edges}
+
+    if available and turn_counts is not None:
+        # Pick a movement group honouring TURN_PROBABILITIES.
+     
+            
+        group = choose_turn_group(
+            rng=rng,
+            available_groups=available,
+            turn_counts=turn_counts,
+            strict_split=True,
+        )
+        
+        if group is not None:
+            candidates = available[group]
+            weights = [
+                successor_weight(
+                    current_edge=current_edge,
+                    next_edge=s,
+                    previous_edge=previous_edge,
+                    edge_metadata=edge_metadata,
+                    core_edges=core_edges,
+                    args=args,
+                )
+                for s in candidates
+            ]
+            chosen = weighted_choice(rng, candidates, weights)
+            turn_counts[group] += 1
+            return chosen
+    
+    # Fallback: weight all successors (including unclassified) normally.
+    candidates = [s for s in successors if s != previous_edge] or list(successors)
     weights = [
         successor_weight(
             current_edge=current_edge,
-            next_edge=successor,
+            next_edge=s,
             previous_edge=previous_edge,
             edge_metadata=edge_metadata,
             core_edges=core_edges,
             args=args,
         )
-        for successor in successors
+        for s in candidates
     ]
-
-    return weighted_choice(rng, successors, weights)
+    return weighted_choice(rng, candidates, weights)
 
 
 def choose_next_edge(
@@ -1327,7 +1423,10 @@ def choose_next_edge(
                 if outgoing_edge == previous_edge:
                     continue
 
-                if outgoing_edge not in raw_graph:
+                # Allow straight movements onto boundary/dead-end edges that
+                # aren't in raw_graph — the vehicle will be recovered from
+                # there by the normal recovery mechanism.
+                if option["movement"] != "S" and outgoing_edge not in raw_graph:
                     continue
 
                 weighted_options.append(option)
@@ -1357,6 +1456,7 @@ def choose_next_edge(
         core_edges=core_edges,
         rng=rng,
         args=args,
+        turn_counts=turn_counts,
     )
 
 

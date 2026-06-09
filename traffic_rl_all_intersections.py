@@ -290,15 +290,251 @@ def patch_car_vtype(route_file):
     path.write_text(text)
 
 
-def generate_route_variants(periods, route_seeds):
-    if not os.path.exists(RANDOM_TRIPS_SCRIPT):
-        raise FileNotFoundError(
-            f"Could not find randomTrips.py at {RANDOM_TRIPS_SCRIPT}. "
-            "Check SUMO_HOME."
-        )
 
+# ---------------------------------------------------------------------------
+# Realistic turn proportions (matches realistic_turn_simulation.py)
+# ---------------------------------------------------------------------------
+TURN_PROPORTIONS = {
+    "L": 0.15,
+    "S": 0.70,
+    "R": 0.15,
+}
+APPROACHES = ["NB", "SB", "EB", "WB"]
+MOVEMENTS  = ["L", "S", "R"]
+
+
+def _edge_allows_passenger(edge_id):
+    """Return True if edge_id can carry passenger cars."""
+    if not edge_id or edge_id.startswith(":"):
+        return False
+    try:
+        if traci.edge.getLaneNumber(edge_id) <= 0:
+            return False
+        lane_id   = f"{edge_id}_0"
+        allowed   = traci.lane.getAllowed(lane_id)
+        disallowed = traci.lane.getDisallowed(lane_id)
+        if not allowed:
+            return "passenger" not in disallowed and "private" not in disallowed
+        return "passenger" in allowed or "private" in allowed or "car" in allowed
+    except traci.TraCIException:
+        return False
+
+
+def _lane_to_edge(lane_id):
+    if not lane_id or lane_id.startswith(":"):
+        return None
+    return lane_id.rsplit("_", 1)[0] if "_" in lane_id else lane_id
+
+
+def _build_movement_edge_pairs_for_tls(tls_id):
+    """
+    Returns {label: [(in_edge, out_edge), ...]} for every NB/SB/EB/WB × L/S/R
+    combination found in the TLS controlled links.
+    """
+    movement_pairs = {
+        f"{approach}-{movement}": set()
+        for approach in APPROACHES
+        for movement in MOVEMENTS
+    }
+
+    for signal_links in traci.trafficlight.getControlledLinks(tls_id):
+        for link in signal_links:
+            if len(link) < 2:
+                continue
+            in_lane, out_lane = link[0], link[1]
+            if not in_lane or not out_lane:
+                continue
+            in_edge  = _lane_to_edge(in_lane)
+            out_edge = _lane_to_edge(out_lane)
+            if not in_edge or not out_edge or in_edge == out_edge:
+                continue
+            try:
+                in_vec  = lane_direction_vector(in_lane,  incoming=True)
+                out_vec = lane_direction_vector(out_lane, incoming=False)
+                if in_vec is None or out_vec is None:
+                    continue
+                approach = classify_approach(in_vec)
+                angle    = signed_turn_angle(in_vec, out_vec)
+                movement = classify_movement(angle)
+                label    = f"{approach}-{movement}"
+                if label in movement_pairs:
+                    movement_pairs[label].add((in_edge, out_edge))
+            except traci.TraCIException:
+                continue
+
+    return {label: sorted(pairs) for label, pairs in movement_pairs.items()}
+
+
+def _get_destination_edges(excluded_edges):
+    """Return all passenger-accessible edges not in excluded_edges (len >= 25 m)."""
+    edges = []
+    for edge_id in traci.edge.getIDList():
+        if edge_id.startswith(":") or edge_id in excluded_edges:
+            continue
+        if not _edge_allows_passenger(edge_id):
+            continue
+        try:
+            if traci.lane.getLength(f"{edge_id}_0") < 25:
+                continue
+            edges.append(edge_id)
+        except traci.TraCIException:
+            continue
+    return sorted(edges)
+
+
+def _choose_destination(rng, destination_edges, forbidden):
+    for _ in range(100):
+        edge = rng.choice(destination_edges)
+        if edge not in forbidden:
+            return edge
+    return rng.choice(destination_edges)
+
+
+def _collect_all_tls_movement_pairs():
+    """
+    Starts SUMO briefly to collect movement→edge-pair mappings for every TLS
+    in the network.  Returns (all_movement_pairs, destination_edges).
+
+    all_movement_pairs: { tls_id: { label: [(in_edge, out_edge), ...] } }
+    destination_edges:  [edge_id, ...]  (network-wide pool for route endpoints)
+    """
+    sumo_cmd = [
+        SUMO_HEADLESS_BINARY,
+        "-n", NET_FILE,
+        "--start",
+        "--step-length", str(STEP_LENGTH),
+        "--end", "1",
+        *QUIET_SUMO_ARGS,
+    ]
+    traci.start(sumo_cmd)
+
+    try:
+        tls_ids = list(traci.trafficlight.getIDList())
+        all_movement_pairs = {}
+        intersection_edges = set()
+
+        for tls_id in tls_ids:
+            pairs = _build_movement_edge_pairs_for_tls(tls_id)
+            all_movement_pairs[tls_id] = pairs
+            for pair_list in pairs.values():
+                for in_edge, out_edge in pair_list:
+                    intersection_edges.add(in_edge)
+                    intersection_edges.add(out_edge)
+
+        destination_edges = _get_destination_edges(intersection_edges)
+
+        if not destination_edges:
+            raise RuntimeError("No valid destination edges found in network.")
+
+        return all_movement_pairs, destination_edges
+
+    finally:
+        traci.close()
+
+
+def _write_realistic_route_file(
+    output_file,
+    all_movement_pairs,
+    destination_edges,
+    base_approach_period,
+    begin,
+    end,
+    seed,
+):
+    """
+    Writes a .rou.xml with <flow> elements for every intersection in the
+    network, honouring TURN_PROPORTIONS (70 % straight / 15 % left / 15 % right).
+
+    base_approach_period: average seconds between consecutive vehicles on one
+    approach across all movements combined.  Matches the --period semantics
+    used by the old randomTrips call so the traffic density is comparable.
+    """
+    rng = random.Random(seed)
+
+    lines = ['<routes>']
+    lines.append(
+        '    <vType id="car"\n'
+        '           accel="2.6"\n'
+        '           decel="4.5"\n'
+        '           emergencyDecel="9.0"\n'
+        '           maxSpeed="13.9"\n'
+        '           sigma="0.5"\n'
+        '           lcCooperative="1.0"\n'
+        '           lcStrategic="1.0"\n'
+        '           lcSpeedGain="1.0"\n'
+        '           jmIgnoreKeepClearTime="-1"\n'
+        '           jmDriveAfterYellowTime="-1"\n'
+        '           jmDriveAfterRedTime="-1"/>'
+    )
+
+    flow_count = 0
+
+    for tls_id, movement_pairs in sorted(all_movement_pairs.items()):
+        for approach in APPROACHES:
+            for movement in MOVEMENTS:
+                label = f"{approach}-{movement}"
+                pairs = movement_pairs.get(label, [])
+                if not pairs:
+                    continue
+
+                proportion = TURN_PROPORTIONS[movement]
+                # period per movement = base / proportion
+                # then multiply by len(pairs) to split demand across lane pairs
+                pair_period = (base_approach_period / proportion) * len(pairs)
+
+                for idx, (from_edge, via_edge) in enumerate(pairs):
+                    dest = _choose_destination(
+                        rng,
+                        destination_edges,
+                        forbidden={from_edge, via_edge},
+                    )
+                    flow_id = f"rt_{tls_id[:20]}_{label}_{idx}"
+                    lines.append(
+                        f'    <flow id="{flow_id}"'
+                        f' type="car"'
+                        f' begin="{begin}"'
+                        f' end="{end}"'
+                        f' period="{pair_period:.3f}"'
+                        f' from="{from_edge}"'
+                        f' to="{dest}"'
+                        f' via="{via_edge}"'
+                        f' departLane="best"'
+                        f' departPos="free"'
+                        f' departSpeed="max"/>'
+                    )
+                    flow_count += 1
+
+    lines.append('</routes>')
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    return flow_count
+
+
+def generate_route_variants(periods, route_seeds):
+    """
+    Replaces the old randomTrips-based generator.
+
+    For each (period, seed) combination this function:
+      1. Queries every TLS in the network for its controlled lane pairs.
+      2. Classifies each pair as NB/SB/EB/WB × L/S/R using the same geometry
+         helpers used by realistic_turn_simulation.py.
+      3. Emits <flow> elements that honour TURN_PROPORTIONS (70 % straight,
+         15 % left, 15 % right) at the requested traffic density (period).
+
+    The output files are named identically to the old ones so that
+    discover_background_route_variants() and all training code continue to
+    work without modification.
+    """
     if not os.path.exists(NET_FILE):
         raise FileNotFoundError(f"Missing network file: {NET_FILE}")
+
+    print()
+    print("Collecting movement→edge-pair mappings for every TLS in the network …")
+    all_movement_pairs, destination_edges = _collect_all_tls_movement_pairs()
+    print(f"Found {len(all_movement_pairs)} traffic lights, "
+          f"{len(destination_edges)} destination edges.")
 
     generated_files = []
 
@@ -311,37 +547,30 @@ def generate_route_variants(periods, route_seeds):
                 f"background_train_all_{period_name}_seed{seed}.rou.xml",
             )
 
-            prefix = f"all_{period_name}_s{seed}_car_"
-
-            cmd = [
-                sys.executable,
-                RANDOM_TRIPS_SCRIPT,
-                "-n", NET_FILE,
-                "-r", output_file,
-                "--no-validate",
-                "-b", "0",
-                "-e", str(SIM_END),
-                "-p", str(period),
-                "--seed", str(seed),
-                "--prefix", prefix,
-                "-t", 'type="car" departLane="best" departPos="free" departSpeed="max"',
-            ]
-
             print()
-            print("Generating route file:")
-            print(" ".join(cmd))
+            print(f"Generating realistic route file: {os.path.basename(output_file)}")
+            print(f"  period={period}s  seed={seed}  "
+                  f"turn split: {int(TURN_PROPORTIONS['S']*100)}% straight / "
+                  f"{int(TURN_PROPORTIONS['L']*100)}% left / "
+                  f"{int(TURN_PROPORTIONS['R']*100)}% right")
 
-            subprocess.run(cmd, check=True)
+            flow_count = _write_realistic_route_file(
+                output_file=output_file,
+                all_movement_pairs=all_movement_pairs,
+                destination_edges=destination_edges,
+                base_approach_period=period,
+                begin=0,
+                end=SIM_END,
+                seed=seed,
+            )
 
-            patch_car_vtype(output_file)
+            print(f"  Wrote {flow_count} flows → {output_file}")
             generated_files.append(output_file)
-
-            print(f"Generated and patched: {output_file}")
 
     print()
     print("Finished generating all-intersection training route files.")
-    for file in generated_files:
-        print(f"  {os.path.basename(file)}")
+    for f in generated_files:
+        print(f"  {os.path.basename(f)}")
 
     return generated_files
 
