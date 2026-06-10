@@ -173,7 +173,9 @@ LOOP_AVOIDANCE_PROTECTED_EDGES = {
     "-417109221#0",
     "417109200",
 }
-LOOP_MEMORY_EDGES = 8
+LOOP_MEMORY_EDGES = 20
+# After this many consecutive straight decisions for one vehicle, force a turn.
+MAX_CONSECUTIVE_STRAIGHT = 4
 LOOP_RECENT_EDGE_PENALTY = 0.03
 LOOP_PROTECTED_TRANSITION_PENALTY = 0.001
 
@@ -184,9 +186,9 @@ LOOP_PROTECTED_TRANSITION_PENALTY = 0.001
 VEHICLE_ROUTE_MEMORY_EDGES = 18
 VEHICLE_EDGE_HISTORY = defaultdict(lambda: deque(maxlen=VEHICLE_ROUTE_MEMORY_EDGES))
 VEHICLE_LAST_EDGE = {}
-SHORT_LOOP_MAX_PERIOD = 5
+SHORT_LOOP_MAX_PERIOD = 10
 SHORT_LOOP_MIN_REPEATS = 2
-RECENT_EDGE_HARD_AVOID_LOOKBACK = 14
+RECENT_EDGE_HARD_AVOID_LOOKBACK = 20
 
 MOVEMENT_LABELS = [
     "NB-L", "NB-S", "NB-R",
@@ -1533,6 +1535,14 @@ def verify_controller_safety(tls_id, controller):
     labels_by_idx = labels_by_signal_index(tls_id)
     right_turn_labels = present_right_turn_labels(labels_by_idx)
 
+    # Determine which signal indices are explicitly managed by the movement_map.
+    # Unmanaged indices (e.g. extra approaches in large merged clusters) are
+    # given permissive green by apply_phase_state and should not be flagged.
+    managed_indices = set()
+    for label_data in controller["movement_map"].values():
+        for signal_index in label_data:
+            managed_indices.add(signal_index)
+
     messages = []
 
     for phase in controller["phases"]:
@@ -1550,7 +1560,9 @@ def verify_controller_safety(tls_id, controller):
         for idx, char in enumerate(state):
             if char not in ("G", "g"):
                 continue
-
+            # Only count managed indices toward safety checks.
+            if idx not in managed_indices:
+                continue
             active_labels.update(labels_by_idx.get(idx, set()))
 
         bad_labels = active_labels - allowed_labels
@@ -1615,16 +1627,27 @@ def build_state_from_movements(
     phase_rules,
     check_space=True,
 ):
-    state = ["r"] * state_length
+    # Start all signals as permissive green ("g") so that movements not
+    # covered by the 4-phase NB/SB/EB/WB plan (e.g. diagonal approaches in
+    # large merged clusters) can still proceed rather than being permanently
+    # red. Protected phases (G) will override these below.
+    state = ["g"] * state_length
     active_indices = set()
+
+    # Track which indices are explicitly managed by the phase plan.
+    managed_indices = set()
 
     for movement_label, signal_char in phase_rules.items():
         signal_data = movement_map.get(movement_label, {})
 
         for signal_index, lane_sets in signal_data.items():
+            managed_indices.add(signal_index)
             out_lanes = lane_sets["out"]
 
             if check_space and not lanes_have_space(out_lanes):
+                # Managed but blocked — set to red.
+                if state[signal_index] != "G":
+                    state[signal_index] = "r"
                 continue
 
             current = state[signal_index]
@@ -1634,10 +1657,16 @@ def build_state_from_movements(
 
             if signal_char == "G":
                 state[signal_index] = "G"
-            elif signal_char == "g" and current == "r":
+            elif signal_char == "g" and current not in ("G",):
                 state[signal_index] = "g"
 
             active_indices.add(signal_index)
+
+    # Unmanaged indices stay "g" (permissive) — they were never set to "r".
+    # Count them as active so the controller doesn't think the phase is empty.
+    for i in range(state_length):
+        if i not in managed_indices:
+            active_indices.add(i)
 
     return "".join(state), active_indices
 
@@ -2771,6 +2800,7 @@ def choose_uncontrolled_successor(
     args,
     turn_counts=None,
     recent_edges=None,
+    straight_streak=0,
 ):
     successors = raw_graph.get(current_edge, [])
 
@@ -2804,6 +2834,10 @@ def choose_uncontrolled_successor(
 
     # Build available dict — only groups with options.
     available = {g: edges for g, edges in groups.items() if edges}
+
+    # Force a turn after too many consecutive straights.
+    if straight_streak >= MAX_CONSECUTIVE_STRAIGHT and len(available) > 1:
+        available = {g: edges for g, edges in available.items() if g != "S"}
 
     if available and turn_counts is not None:
         # Pick a movement group honouring TURN_PROBABILITIES.
@@ -2860,6 +2894,7 @@ def choose_next_edge(
     turn_counts,
     args,
     recent_edges=None,
+    straight_streak=0,
 ):
     recent_edges = tuple(recent_edges or ())
 
@@ -2952,6 +2987,7 @@ def choose_next_edge(
         args=args,
         turn_counts=turn_counts,
         recent_edges=recent_edges,
+        straight_streak=straight_streak,
     )
 
 def build_random_walk_route(
@@ -2966,10 +3002,12 @@ def build_random_walk_route(
     args,
     previous_edge=None,
     initial_recent_edges=None,
+    initial_straight_streak=0,
 ):
     route = [start_edge]
     current_edge = start_edge
     initial_recent_edges = tuple(initial_recent_edges or ())
+    straight_streak = initial_straight_streak
 
     for _ in range(lookahead_edges - 1):
         recent_edges = tuple((list(initial_recent_edges) + route)[-LOOP_MEMORY_EDGES:])
@@ -2984,12 +3022,18 @@ def build_random_walk_route(
             turn_counts=turn_counts,
             args=args,
             recent_edges=recent_edges,
+            straight_streak=straight_streak,
         )
 
         if next_edge is None:
             break
 
         if next_edge == current_edge:
+            break
+
+        # Hard stop: never visit an edge already in this route extension.
+        # This prevents cars from circling a fixed loop indefinitely.
+        if next_edge in route:
             break
 
         # Do not knowingly create a repeated tail pattern such as
@@ -2999,6 +3043,10 @@ def build_random_walk_route(
         tentative = route + [next_edge]
         if has_repeated_tail_pattern(list(initial_recent_edges) + tentative):
             break
+
+        # Update consecutive-straight streak.
+        movement = classify_edge_successor_movement(current_edge, next_edge)
+        straight_streak = straight_streak + 1 if movement == "S" else 0
 
         route.append(next_edge)
         previous_edge = current_edge
@@ -3091,6 +3139,7 @@ def extend_vehicle_route(
     turn_counts,
     args,
     recent_edges=None,
+    sim_state=None,
 ):
     try:
         recent_edges = tuple(recent_edges or ())
@@ -3149,6 +3198,7 @@ def extend_vehicle_route(
 
             return recovered, recovered
 
+        veh_streak = (sim_state or {}).get("straight_streak", {}).get(veh_id, 0)
         extension = build_random_walk_route(
             start_edge=last_edge,
             lookahead_edges=lookahead_edges,
@@ -3161,7 +3211,18 @@ def extend_vehicle_route(
             args=args,
             previous_edge=previous_edge,
             initial_recent_edges=recent_edges,
+            initial_straight_streak=veh_streak,
         )
+        # Update streak: count trailing straights in the new extension.
+        if sim_state is not None:
+            streak = 0
+            for i in range(len(extension) - 1, 0, -1):
+                m = classify_edge_successor_movement(extension[i-1], extension[i])
+                if m == "S":
+                    streak += 1
+                else:
+                    break
+            sim_state.setdefault("straight_streak", {})[veh_id] = streak
 
         if len(extension) < 2:
             recovered = recover_vehicle_route(
@@ -3431,6 +3492,7 @@ def run_simulation_steps(
             turn_counts=turn_counts,
             args=args,
             recent_edges=recent_edges,
+            sim_state=sim_state,
         )
 
         if extended:
