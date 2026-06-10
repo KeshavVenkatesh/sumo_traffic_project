@@ -1627,27 +1627,25 @@ def build_state_from_movements(
     phase_rules,
     check_space=True,
 ):
-    # Start all signals as permissive green ("g") so that movements not
-    # covered by the 4-phase NB/SB/EB/WB plan (e.g. diagonal approaches in
-    # large merged clusters) can still proceed rather than being permanently
-    # red. Protected phases (G) will override these below.
-    state = ["g"] * state_length
-    active_indices = set()
+    # Determine which signal indices are managed by any movement label.
+    # Unmanaged indices (extra approaches in large merged clusters) get
+    # permissive green so they are never permanently blocked.
+    all_managed_indices = set()
+    for label_data in movement_map.values():
+        for signal_index in label_data:
+            all_managed_indices.add(signal_index)
 
-    # Track which indices are explicitly managed by the phase plan.
-    managed_indices = set()
+    # Start managed indices as "r"; unmanaged as "g" (permissive yield).
+    state = ["g" if i not in all_managed_indices else "r" for i in range(state_length)]
+    active_indices = set()
 
     for movement_label, signal_char in phase_rules.items():
         signal_data = movement_map.get(movement_label, {})
 
         for signal_index, lane_sets in signal_data.items():
-            managed_indices.add(signal_index)
             out_lanes = lane_sets["out"]
 
             if check_space and not lanes_have_space(out_lanes):
-                # Managed but blocked — set to red.
-                if state[signal_index] != "G":
-                    state[signal_index] = "r"
                 continue
 
             current = state[signal_index]
@@ -1657,15 +1655,14 @@ def build_state_from_movements(
 
             if signal_char == "G":
                 state[signal_index] = "G"
-            elif signal_char == "g" and current not in ("G",):
+            elif signal_char == "g" and current == "r":
                 state[signal_index] = "g"
 
             active_indices.add(signal_index)
 
-    # Unmanaged indices stay "g" (permissive) — they were never set to "r".
-    # Count them as active so the controller doesn't think the phase is empty.
+    # Count unmanaged indices as active.
     for i in range(state_length):
-        if i not in managed_indices:
+        if i not in all_managed_indices:
             active_indices.add(i)
 
     return "".join(state), active_indices
@@ -1708,9 +1705,10 @@ def build_controller_for_tls(tls_id, rng, activate=True):
         "last_signal_update": -1e9,
     }
 
-    safe, _ = verify_controller_safety(tls_id, controller)
+    safe, messages = verify_controller_safety(tls_id, controller)
 
     if not safe:
+        print(f"DEBUG controller rejected for {tls_id}: {messages[:3]}", flush=True)
         return None
 
     controller["phase_pos"] = rng.randrange(len(phases))
