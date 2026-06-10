@@ -1705,10 +1705,9 @@ def build_controller_for_tls(tls_id, rng, activate=True):
         "last_signal_update": -1e9,
     }
 
-    safe, messages = verify_controller_safety(tls_id, controller)
+    safe, _ = verify_controller_safety(tls_id, controller)
 
     if not safe:
-        print(f"DEBUG controller rejected for {tls_id}: {messages[:3]}", flush=True)
         return None
 
     controller["phase_pos"] = rng.randrange(len(phases))
@@ -2834,7 +2833,7 @@ def choose_uncontrolled_successor(
     available = {g: edges for g, edges in groups.items() if edges}
 
     # Force a turn after too many consecutive straights.
-    if straight_streak >= MAX_CONSECUTIVE_STRAIGHT and len(available) > 1:
+    if straight_streak >= args.max_consecutive_straight and len(available) > 1:
         available = {g: edges for g, edges in available.items() if g != "S"}
 
     if available and turn_counts is not None:
@@ -3922,6 +3921,12 @@ def main():
     )
 
     parser.add_argument("--green-duration", type=float, default=30.0)
+    parser.add_argument(
+        "--max-consecutive-straight",
+        type=int,
+        default=4,
+        help="Force a turn after this many consecutive straight decisions per vehicle. Lower = more dispersion. Default 4.",
+    )
     parser.add_argument("--print-every", type=float, default=60.0)
 
     parser.add_argument(
