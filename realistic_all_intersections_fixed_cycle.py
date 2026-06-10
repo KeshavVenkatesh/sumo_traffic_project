@@ -6,7 +6,7 @@ import re
 import sys
 import time
 import traceback
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from functools import lru_cache
 from xml.sax.saxutils import quoteattr
 
@@ -100,16 +100,93 @@ LANE_PREF_MAX_WAITING_TIME = 10.0
 LANE_PREF_INTERVAL = 1.0
 TURN_LANE_PREFERENCE_INDEX = {}
 
+# Near-intersection movement decision helper.
+# Vehicles make their S/R/L choice as they approach an intersection, then the
+# route and lane request are aligned with that choice.  This keeps the actual
+# approach behavior close to the 70 / 17.5 / 12.5 split without doing expensive
+# per-step rerouting.
+APPROACH_DECISION_INDEX = {}
+APPROACH_TURN_DECISIONS = {}
+APPROACH_TURN_COUNTS = Counter()
+APPROACH_DECISION_MIN_DISTANCE_TO_END = 35.0
+APPROACH_DECISION_MAX_DISTANCE_TO_END = 180.0
+APPROACH_LANE_CHANGE_BASE_DISTANCE = 22.0
+APPROACH_LANE_CHANGE_DISTANCE_PER_LANE = 32.0
+APPROACH_LANE_CHANGE_DURATION = 16.0
+APPROACH_DECISION_PRUNE_LIMIT = 10000
+
 # Universal keep-clear / right-of-way safety gate.
 # This is enforced at the vehicle level, not by flickering traffic lights.
 # Cars approaching any junction, signalized or unsignalized, are held before
 # the junction when their next edge or internal junction path is not clear.
 KEEP_CLEAR_HELD_VEHICLES = set()
+KEEP_CLEAR_HOLD_START_TIME = {}
+KEEP_CLEAR_FORCE_RELEASE_UNTIL = {}
 KEEP_CLEAR_LOOKAHEAD_DISTANCE = 12.0
 KEEP_CLEAR_STOP_BUFFER = 6.0
 KEEP_CLEAR_EXIT_GAP = CAR_LENGTH + CAR_MIN_GAP + 1.5
+# If the first vehicle on the next edge is already moving at least this fast,
+# do not hold the next vehicle just because the gap is momentarily small.
+# This prevents slow queue discharge / phantom stops after the front car starts moving.
+KEEP_CLEAR_EXIT_MOVING_OK_SPEED = 0.8
 KEEP_CLEAR_INTERNAL_QUEUE_SPEED = 0.2
 KEEP_CLEAR_INTERNAL_MAX_VEHICLES = 99
+# Hard safety valve: custom keep-clear may hold a vehicle briefly, but it must
+# never create a permanent/phantom stop. If a car is held longer than this,
+# release it and temporarily stop applying custom keep-clear to that car.
+KEEP_CLEAR_MAX_HOLD_TIME = 3.0
+KEEP_CLEAR_RELEASE_COOLDOWN = 10.0
+# If SUMO reports a vehicle as waiting for a long time but our keep-clear test
+# no longer justifies holding it, explicitly release its speed override.
+STUCK_RELEASE_WAIT_TIME = 12.0
+STUCK_RELEASE_SPEED = 0.05
+
+# Extra watchdog for lanes where the custom keep-clear logic previously
+# produced phantom stops. These constants must be defined before
+# is_phantom_stop_protected_location() is called.
+PHANTOM_STOP_PROTECTED_LANES = {
+    "-417109192_1",
+    "417109221#0_0",
+    "-417109221#0_0",
+    "417109200_1",
+}
+PHANTOM_STOP_PROTECTED_EDGES = {
+    "-417109192",
+    "417109221#0",
+    "-417109221#0",
+    "417109200",
+}
+PHANTOM_STOP_PROTECTED_WAIT_TIME = 2.0
+
+# Local circulation loop breaker.
+# These two edges were observed to attract vehicles into a small repeating loop:
+#   lane -417109221#0_0  -> edge -417109221#0
+#   lane  417109200_1    -> edge  417109200
+# The routing logic now avoids transitions that keep a vehicle bouncing between
+# these roads, and route extension forcibly rewrites routes for cars currently
+# on these edges.
+LOOP_AVOIDANCE_PROTECTED_LANES = {
+    "-417109221#0_0",
+    "417109200_1",
+}
+LOOP_AVOIDANCE_PROTECTED_EDGES = {
+    "-417109221#0",
+    "417109200",
+}
+LOOP_MEMORY_EDGES = 8
+LOOP_RECENT_EDGE_PENALTY = 0.03
+LOOP_PROTECTED_TRANSITION_PENALTY = 0.001
+
+# General per-vehicle route-memory loop breaker.  The older fix only handled
+# one observed two-road loop.  This prevents the same cycle pattern from
+# reappearing elsewhere by remembering the recent edges for each vehicle and
+# avoiding choices that would send it back into those edges.
+VEHICLE_ROUTE_MEMORY_EDGES = 18
+VEHICLE_EDGE_HISTORY = defaultdict(lambda: deque(maxlen=VEHICLE_ROUTE_MEMORY_EDGES))
+VEHICLE_LAST_EDGE = {}
+SHORT_LOOP_MAX_PERIOD = 5
+SHORT_LOOP_MIN_REPEATS = 2
+RECENT_EDGE_HARD_AVOID_LOOKBACK = 14
 
 MOVEMENT_LABELS = [
     "NB-L", "NB-S", "NB-R",
@@ -193,6 +270,119 @@ def lane_to_edge(lane_id):
     return lane_id.rsplit("_", 1)[0]
 
 
+def is_phantom_stop_protected_location(lane_id, edge_id=None):
+    if lane_id in PHANTOM_STOP_PROTECTED_LANES:
+        return True
+
+    if edge_id is None:
+        edge_id = lane_to_edge(lane_id)
+
+    return edge_id in PHANTOM_STOP_PROTECTED_EDGES
+
+
+def is_loop_avoidance_location(lane_id=None, edge_id=None):
+    if lane_id in LOOP_AVOIDANCE_PROTECTED_LANES:
+        return True
+
+    if edge_id is None and lane_id is not None:
+        edge_id = lane_to_edge(lane_id)
+
+    return edge_id in LOOP_AVOIDANCE_PROTECTED_EDGES
+
+
+def should_avoid_successor_for_loop(current_edge, next_edge, recent_edges=None):
+    if not next_edge:
+        return False
+
+    if (
+        current_edge in LOOP_AVOIDANCE_PROTECTED_EDGES
+        and next_edge in LOOP_AVOIDANCE_PROTECTED_EDGES
+    ):
+        return True
+
+    if recent_edges and next_edge in set(recent_edges):
+        return True
+
+    return False
+
+
+def loop_avoidance_weight_multiplier(current_edge, next_edge, recent_edges=None):
+    multiplier = 1.0
+
+    if (
+        current_edge in LOOP_AVOIDANCE_PROTECTED_EDGES
+        and next_edge in LOOP_AVOIDANCE_PROTECTED_EDGES
+    ):
+        multiplier *= LOOP_PROTECTED_TRANSITION_PENALTY
+
+    if recent_edges and next_edge in set(recent_edges):
+        multiplier *= LOOP_RECENT_EDGE_PENALTY
+
+    return multiplier
+
+
+def update_vehicle_edge_history(veh_id, edge_id):
+    if edge_id is None or edge_id.startswith(":"):
+        return tuple(VEHICLE_EDGE_HISTORY.get(veh_id, ()))
+
+    last_edge = VEHICLE_LAST_EDGE.get(veh_id)
+    if last_edge != edge_id:
+        VEHICLE_EDGE_HISTORY[veh_id].append(edge_id)
+        VEHICLE_LAST_EDGE[veh_id] = edge_id
+
+    return tuple(VEHICLE_EDGE_HISTORY[veh_id])
+
+
+def prune_vehicle_edge_history(active_ids):
+    active_ids = set(active_ids)
+
+    for veh_id in list(VEHICLE_EDGE_HISTORY.keys()):
+        if veh_id not in active_ids:
+            VEHICLE_EDGE_HISTORY.pop(veh_id, None)
+            VEHICLE_LAST_EDGE.pop(veh_id, None)
+
+
+def vehicle_recent_edges(veh_id):
+    return tuple(VEHICLE_EDGE_HISTORY.get(veh_id, ()))
+
+
+def has_repeated_tail_pattern(edges, max_period=SHORT_LOOP_MAX_PERIOD, repeats=SHORT_LOOP_MIN_REPEATS):
+    edges = list(edges)
+    for period in range(1, max_period + 1):
+        needed = period * repeats
+        if len(edges) < needed:
+            continue
+        tail = edges[-period:]
+        if all(edges[-period * k:-period * (k - 1) if k > 1 else None] == tail for k in range(1, repeats + 1)):
+            return True
+    return False
+
+
+def candidate_edges_after_loop_filter(candidates, get_edge, recent_edges, previous_edge=None):
+    """Return loop-safe candidates if possible, otherwise original candidates.
+
+    This is intentionally cheap: it only uses the small per-vehicle recent-edge
+    deque and does not call TraCI.
+    """
+    candidates = list(candidates)
+    if not candidates:
+        return []
+
+    recent_set = set(tuple(recent_edges or ())[-RECENT_EDGE_HARD_AVOID_LOOKBACK:])
+    preferred = []
+
+    for candidate in candidates:
+        edge = get_edge(candidate)
+        if edge is None:
+            continue
+        if previous_edge is not None and edge == previous_edge:
+            continue
+        if should_avoid_successor_for_loop(None, edge, recent_set):
+            continue
+        preferred.append(candidate)
+
+    return preferred or candidates
+
 
 @lru_cache(maxsize=20000)
 def cached_lane_length(lane_id):
@@ -220,22 +410,61 @@ def safe_vehicle_set_speed(veh_id, speed):
         return False
 
 
+def current_sim_time():
+    try:
+        return traci.simulation.getTime()
+    except traci.TraCIException:
+        return 0.0
+
+
+def clear_keep_clear_tracking(veh_id):
+    KEEP_CLEAR_HELD_VEHICLES.discard(veh_id)
+    KEEP_CLEAR_HOLD_START_TIME.pop(veh_id, None)
+
+
+def keep_clear_is_in_release_cooldown(veh_id):
+    return KEEP_CLEAR_FORCE_RELEASE_UNTIL.get(veh_id, -1.0) > current_sim_time()
+
+
 def release_keep_clear_vehicle(veh_id):
-    if veh_id not in KEEP_CLEAR_HELD_VEHICLES:
-        return False
+    # setSpeed(0) persists until reset with setSpeed(-1), so always reset when
+    # this vehicle may have been controlled by our custom keep-clear gate.
+    was_tracked = veh_id in KEEP_CLEAR_HELD_VEHICLES or veh_id in KEEP_CLEAR_HOLD_START_TIME
 
     if safe_vehicle_set_speed(veh_id, -1):
-        KEEP_CLEAR_HELD_VEHICLES.discard(veh_id)
-        return True
+        clear_keep_clear_tracking(veh_id)
+        return was_tracked
 
-    KEEP_CLEAR_HELD_VEHICLES.discard(veh_id)
+    clear_keep_clear_tracking(veh_id)
     return False
 
 
+def force_release_keep_clear_vehicle(veh_id):
+    now = current_sim_time()
+    KEEP_CLEAR_FORCE_RELEASE_UNTIL[veh_id] = now + KEEP_CLEAR_RELEASE_COOLDOWN
+    return release_keep_clear_vehicle(veh_id)
+
+
 def hold_vehicle_before_junction(veh_id):
+    now = current_sim_time()
+
+    # If this vehicle was recently released by the watchdog, do not immediately
+    # re-hold it. This prevents the "stopped for no reason forever" behavior.
+    if KEEP_CLEAR_FORCE_RELEASE_UNTIL.get(veh_id, -1.0) > now:
+        safe_vehicle_set_speed(veh_id, -1)
+        return False
+
+    hold_start = KEEP_CLEAR_HOLD_START_TIME.get(veh_id)
+    if hold_start is None:
+        KEEP_CLEAR_HOLD_START_TIME[veh_id] = now
+    elif now - hold_start >= KEEP_CLEAR_MAX_HOLD_TIME:
+        force_release_keep_clear_vehicle(veh_id)
+        return False
+
     if safe_vehicle_set_speed(veh_id, 0.0):
         KEEP_CLEAR_HELD_VEHICLES.add(veh_id)
         return True
+
     return False
 
 
@@ -267,8 +496,10 @@ def next_edge_has_exit_space(next_edge):
     if not lanes:
         return True
 
-    # A car should be allowed to enter the junction only if at least one lane
-    # on the next edge has enough empty space immediately after the junction.
+    # A car should be allowed to enter the junction if at least one lane on the
+    # next edge has enough immediately usable space. A moving vehicle near the
+    # start of the next edge is not treated as a hard blockage; otherwise the
+    # queue develops a very slow start-up wave and phantom stops.
     for lane_id in lanes:
         try:
             veh_ids = traci.lane.getLastStepVehicleIDs(lane_id)
@@ -279,16 +510,28 @@ def next_edge_has_exit_space(next_edge):
             return True
 
         closest_to_start = None
+        closest_speed = 0.0
+
         for other_id in veh_ids:
             try:
                 pos = traci.vehicle.getLanePosition(other_id)
+                speed = traci.vehicle.getSpeed(other_id)
             except traci.TraCIException:
                 continue
 
             if closest_to_start is None or pos < closest_to_start:
                 closest_to_start = pos
+                closest_speed = speed
 
-        if closest_to_start is None or closest_to_start >= KEEP_CLEAR_EXIT_GAP:
+        if closest_to_start is None:
+            return True
+
+        if closest_to_start >= KEEP_CLEAR_EXIT_GAP:
+            return True
+
+        # If the closest vehicle is already moving away from the junction,
+        # there will be usable space by the time the next car reaches the exit.
+        if closest_speed >= KEEP_CLEAR_EXIT_MOVING_OK_SPEED:
             return True
 
     return False
@@ -362,6 +605,9 @@ def internal_junction_path_is_clear(current_lane, next_edge):
 
 
 def should_hold_for_keep_clear(veh_id):
+    if keep_clear_is_in_release_cooldown(veh_id):
+        return False
+
     try:
         lane_id = traci.vehicle.getLaneID(veh_id)
     except traci.TraCIException:
@@ -385,6 +631,30 @@ def should_hold_for_keep_clear(veh_id):
 
     distance_to_junction = lane_len - lane_pos
 
+    # On a few short/odd connector lanes, the custom setSpeed(0) keep-clear
+    # override can create a phantom stop even when SUMO's own model would let
+    # the car proceed safely. Do not allow a custom hold to persist there.
+    if is_phantom_stop_protected_location(lane_id, current_edge):
+        try:
+            if traci.vehicle.getWaitingTime(veh_id) >= PHANTOM_STOP_PROTECTED_WAIT_TIME:
+                force_release_keep_clear_vehicle(veh_id)
+                return False
+        except traci.TraCIException:
+            return False
+
+    # Only the lead vehicle near the junction should be controlled. Cars behind
+    # it should simply follow normally; holding every car in the queue makes the
+    # queue restart painfully slowly.
+    try:
+        leader = traci.vehicle.getLeader(veh_id, KEEP_CLEAR_LOOKAHEAD_DISTANCE)
+    except traci.TraCIException:
+        leader = None
+
+    if leader is not None:
+        _, leader_gap = leader
+        if leader_gap < max(2.0, distance_to_junction - KEEP_CLEAR_STOP_BUFFER):
+            return False
+
     # Only check cars that are close enough to actually enter the next junction.
     if distance_to_junction > KEEP_CLEAR_LOOKAHEAD_DISTANCE:
         return False
@@ -403,15 +673,47 @@ def should_hold_for_keep_clear(veh_id):
     return False
 
 
+def release_if_unjustifiably_stuck(veh_id):
+    try:
+        lane_id = traci.vehicle.getLaneID(veh_id)
+        edge_id = lane_to_edge(lane_id)
+        speed = traci.vehicle.getSpeed(veh_id)
+        waiting_time = traci.vehicle.getWaitingTime(veh_id)
+    except traci.TraCIException:
+        return False
+
+    if speed > STUCK_RELEASE_SPEED:
+        return False
+
+    # Strong lane-specific watchdog for the locations where phantom stops were
+    # observed. This only clears our speed override; it does not change the
+    # traffic light or disable SUMO's own collision/right-of-way rules.
+    if is_phantom_stop_protected_location(lane_id, edge_id) and waiting_time >= PHANTOM_STOP_PROTECTED_WAIT_TIME:
+        return force_release_keep_clear_vehicle(veh_id)
+
+    if waiting_time < STUCK_RELEASE_WAIT_TIME:
+        return False
+
+    # General watchdog: never let a custom setSpeed(0) hold become permanent.
+    # After this release, the cooldown prevents the same car from being held
+    # again immediately, so it can resume normal SUMO behavior.
+    return force_release_keep_clear_vehicle(veh_id)
+
+
 def apply_keep_clear_and_right_of_way_to_vehicle(veh_id):
     try:
         lane_id = traci.vehicle.getLaneID(veh_id)
     except traci.TraCIException:
-        KEEP_CLEAR_HELD_VEHICLES.discard(veh_id)
+        clear_keep_clear_tracking(veh_id)
         return False
 
     if lane_id.startswith(":"):
-        KEEP_CLEAR_HELD_VEHICLES.discard(veh_id)
+        clear_keep_clear_tracking(veh_id)
+        return False
+
+    # Run the stuck watchdog before applying a new hold. This prevents the
+    # reported lanes from being re-held forever on every simulation step.
+    if release_if_unjustifiably_stuck(veh_id):
         return False
 
     if should_hold_for_keep_clear(veh_id):
@@ -428,7 +730,16 @@ def apply_keep_clear_and_right_of_way_to_all_vehicles():
     # Release/delete stale held IDs first.
     for veh_id in list(KEEP_CLEAR_HELD_VEHICLES):
         if veh_id not in active_ids:
-            KEEP_CLEAR_HELD_VEHICLES.discard(veh_id)
+            clear_keep_clear_tracking(veh_id)
+
+    for veh_id in list(KEEP_CLEAR_HOLD_START_TIME):
+        if veh_id not in active_ids:
+            clear_keep_clear_tracking(veh_id)
+
+    now = current_sim_time()
+    for veh_id, until in list(KEEP_CLEAR_FORCE_RELEASE_UNTIL.items()):
+        if veh_id not in active_ids or until <= now:
+            KEEP_CLEAR_FORCE_RELEASE_UNTIL.pop(veh_id, None)
 
     for veh_id in active_ids:
         if apply_keep_clear_and_right_of_way_to_vehicle(veh_id):
@@ -762,6 +1073,10 @@ def successor_weight(
 
     if next_edge not in core_edges:
         weight *= args.non_core_penalty
+
+    # Avoid route choices that keep vehicles circulating between the known
+    # two-road loop around -417109221#0 and 417109200.
+    weight *= loop_avoidance_weight_multiplier(current_edge, next_edge)
 
     if current_category == "main" and next_category == "local":
         weight *= args.local_road_penalty
@@ -1711,6 +2026,94 @@ def build_turn_lane_preference_index(controllers):
     return index
 
 
+def build_approach_decision_index(raw_graph):
+    """Precompute all lane/link choices for near-intersection decisions.
+
+    This is broader than the traffic-light-only index: it covers every drivable
+    edge with SUMO lane links, including unsignalized intersections.  Building
+    it once keeps the simulation fast; runtime only does dictionary lookups.
+    """
+    index = {}
+    raw_edge_set = set(raw_graph)
+
+    for incoming_edge, successors in raw_graph.items():
+        successor_set = set(successors)
+        item = {
+            "edge_to_movement": {},
+            "edge_to_lanes": defaultdict(lambda: defaultdict(set)),
+            "movement_to_lanes": defaultdict(set),
+            "lane_to_movements": defaultdict(set),
+            "movement_to_edges": defaultdict(set),
+        }
+
+        for in_lane in cached_edge_lanes(incoming_edge):
+            for link in get_lane_links(in_lane):
+                if not link:
+                    continue
+
+                out_lane = link[0]
+                outgoing_edge = lane_to_edge(out_lane)
+
+                if outgoing_edge is None:
+                    continue
+
+                if outgoing_edge not in successor_set and outgoing_edge not in raw_edge_set:
+                    continue
+
+                if outgoing_edge == incoming_edge:
+                    continue
+
+                movement = None
+                if len(link) > 6:
+                    movement = sumo_link_direction_to_movement(link[6])
+
+                if movement is None:
+                    _, movement = classify_movement_by_geometry(in_lane, out_lane)
+
+                if movement not in TURN_PROBABILITIES:
+                    continue
+
+                # If multiple links point to the same outgoing edge, prefer S
+                # when any straight link exists.
+                if outgoing_edge not in item["edge_to_movement"]:
+                    item["edge_to_movement"][outgoing_edge] = movement
+                elif movement == "S":
+                    item["edge_to_movement"][outgoing_edge] = "S"
+
+                item["edge_to_lanes"][outgoing_edge][movement].add(in_lane)
+                item["movement_to_lanes"][movement].add(in_lane)
+                item["lane_to_movements"][in_lane].add(movement)
+                item["movement_to_edges"][movement].add(outgoing_edge)
+
+        if any(item["movement_to_edges"].values()):
+            index[incoming_edge] = item
+
+    movement_edge_counts = Counter()
+    straight_only_edges = 0
+    shared_right_straight_edges = 0
+
+    for item in index.values():
+        for movement, edges in item["movement_to_edges"].items():
+            movement_edge_counts[movement] += len(edges)
+
+        lane_to_movements = item["lane_to_movements"]
+        if any(movements == {"S"} for movements in lane_to_movements.values()):
+            straight_only_edges += 1
+        if any({"S", "R"}.issubset(movements) for movements in lane_to_movements.values()):
+            shared_right_straight_edges += 1
+
+    print()
+    print("Approach decision index:")
+    print(f"  incoming edges indexed:              {len(index)}")
+    print(f"  straight outgoing choices:           {movement_edge_counts['S']}")
+    print(f"  right-turn outgoing choices:         {movement_edge_counts['R']}")
+    print(f"  left-turn outgoing choices:          {movement_edge_counts['L']}")
+    print(f"  edges with straight-only lanes:      {straight_only_edges}")
+    print(f"  edges with shared right/straight:    {shared_right_straight_edges}")
+
+    return index
+
+
 def target_lanes_for_movement(lane_info, outgoing_edge, movement):
     """Return preferred lane ids for a planned movement."""
     edge_to_lanes = lane_info["edge_to_lanes"]
@@ -1727,18 +2130,32 @@ def target_lanes_for_movement(lane_info, outgoing_edge, movement):
     def movements_for(lane_id):
         return set(lane_to_movements.get(lane_id, set()))
 
+    def avoid_rightmost_when_possible(lanes):
+        # In SUMO's right-hand traffic convention, lane index 0 is usually the
+        # rightmost lane.  For straight traffic, avoid that lane whenever another
+        # straight-capable lane exists, so right turns are not trapped behind
+        # through traffic.
+        if len(lanes) <= 1:
+            return list(lanes)
+
+        non_rightmost = [
+            lane for lane in lanes
+            if (lane_index_from_lane_id(lane) is not None and lane_index_from_lane_id(lane) > 0)
+        ]
+        return non_rightmost or list(lanes)
+
     if movement == "S":
         # Best case: true straight-only lanes. This is the main fix.
         straight_only = [lane for lane in candidates if movements_for(lane) == {"S"}]
         if straight_only:
-            return sorted(straight_only)
+            return sorted(avoid_rightmost_when_possible(straight_only))
 
         # Next best: lanes that allow straight but do not also allow right.
         no_right = [lane for lane in candidates if "S" in movements_for(lane) and "R" not in movements_for(lane)]
         if no_right:
-            return sorted(no_right)
+            return sorted(avoid_rightmost_when_possible(no_right))
 
-        return sorted(candidates)
+        return sorted(avoid_rightmost_when_possible(candidates))
 
     if movement == "R":
         right_only = [lane for lane in candidates if movements_for(lane) == {"R"}]
@@ -1802,6 +2219,347 @@ def planned_next_edge_for_vehicle(veh_id, current_edge):
         return None
 
     return route[route_index + 1]
+
+
+def required_lane_change_distance(current_lane_index, target_lane_index):
+    if current_lane_index is None or target_lane_index is None:
+        return APPROACH_LANE_CHANGE_BASE_DISTANCE
+
+    lane_delta = abs(target_lane_index - current_lane_index)
+    return APPROACH_LANE_CHANGE_BASE_DISTANCE + APPROACH_LANE_CHANGE_DISTANCE_PER_LANE * lane_delta
+
+
+def reachable_preferred_lanes(lane_info, outgoing_edge, movement, current_lane, distance_to_end):
+    current_lane_index = lane_index_from_lane_id(current_lane)
+    preferred = target_lanes_for_movement(lane_info, outgoing_edge, movement)
+    reachable = []
+
+    for lane_id in preferred:
+        target_lane_index = lane_index_from_lane_id(lane_id)
+        required_distance = required_lane_change_distance(current_lane_index, target_lane_index)
+
+        if target_lane_index == current_lane_index or distance_to_end >= required_distance:
+            reachable.append(lane_id)
+
+    return reachable
+
+
+def approach_lane_preference_weight(lane_info, lane_id, movement):
+    lane_movements = set(lane_info["lane_to_movements"].get(lane_id, set()))
+    weight = 1.0
+
+    if lane_movements == {movement}:
+        weight *= 8.0
+    elif movement == "S" and "S" in lane_movements and "R" not in lane_movements:
+        weight *= 4.0
+    elif movement in lane_movements:
+        weight *= 1.5
+
+    # Strongly discourage straight cars from using the rightmost lane when any
+    # other straight-capable lane was available.
+    if movement == "S" and lane_index_from_lane_id(lane_id) == 0:
+        weight *= 0.05
+
+    return weight
+
+
+def build_approach_options_for_vehicle(lane_info, current_lane, distance_to_end):
+    options_by_group = defaultdict(list)
+
+    for movement in MOVEMENT_ORDER:
+        for outgoing_edge in sorted(lane_info["movement_to_edges"].get(movement, set())):
+            candidate_lanes = reachable_preferred_lanes(
+                lane_info=lane_info,
+                outgoing_edge=outgoing_edge,
+                movement=movement,
+                current_lane=current_lane,
+                distance_to_end=distance_to_end,
+            )
+
+            if not candidate_lanes:
+                continue
+
+            current_lane_index = lane_index_from_lane_id(current_lane)
+            target_lane_index = choose_best_target_lane(candidate_lanes, current_lane_index)
+
+            if target_lane_index is None:
+                continue
+
+            target_lane = None
+            for lane_id in candidate_lanes:
+                if lane_index_from_lane_id(lane_id) == target_lane_index:
+                    target_lane = lane_id
+                    break
+
+            if target_lane is None:
+                continue
+
+            options_by_group[movement].append({
+                "movement": movement,
+                "outgoing_edge": outgoing_edge,
+                "target_lane": target_lane,
+                "target_lane_index": target_lane_index,
+            })
+
+    return options_by_group
+
+
+def set_vehicle_route_for_approach_decision(
+    veh_id,
+    current_edge,
+    outgoing_edge,
+    previous_edge,
+    turn_index,
+    raw_graph,
+    edge_metadata,
+    core_edges,
+    rng,
+    args,
+    recent_edges=None,
+):
+    try:
+        route = list(traci.vehicle.getRoute(veh_id))
+        route_index = traci.vehicle.getRouteIndex(veh_id)
+    except traci.TraCIException:
+        return False
+
+    if route_index < 0 or route_index >= len(route):
+        route_prefix = [current_edge]
+    else:
+        route_prefix = [current_edge]
+
+    continuation_counts = Counter()
+
+    if outgoing_edge in raw_graph:
+        continuation = build_random_walk_route(
+            start_edge=outgoing_edge,
+            lookahead_edges=max(2, args.route_lookahead_edges - 1),
+            turn_index=turn_index,
+            raw_graph=raw_graph,
+            edge_metadata=edge_metadata,
+            core_edges=core_edges,
+            rng=rng,
+            turn_counts=continuation_counts,
+            args=args,
+            previous_edge=current_edge,
+            initial_recent_edges=tuple(recent_edges or ()) + (current_edge,),
+        )
+    else:
+        continuation = [outgoing_edge]
+
+    if not continuation or continuation[0] != outgoing_edge:
+        continuation = [outgoing_edge]
+
+    new_route = route_prefix + continuation
+
+    # Remove accidental adjacent duplicates.
+    cleaned = []
+    for edge_id in new_route:
+        if cleaned and cleaned[-1] == edge_id:
+            continue
+        cleaned.append(edge_id)
+
+    if len(cleaned) < 2:
+        return False
+
+    try:
+        traci.vehicle.setRoute(veh_id, cleaned)
+        return True
+    except traci.TraCIException:
+        return False
+
+
+def enforce_approach_target_lane(veh_id, target_lane_index, distance_to_end):
+    try:
+        current_lane = traci.vehicle.getLaneID(veh_id)
+    except traci.TraCIException:
+        return False
+
+    current_lane_index = lane_index_from_lane_id(current_lane)
+
+    if target_lane_index is None or target_lane_index == current_lane_index:
+        return False
+
+    if distance_to_end < required_lane_change_distance(current_lane_index, target_lane_index):
+        return False
+
+    try:
+        traci.vehicle.changeLane(veh_id, target_lane_index, APPROACH_LANE_CHANGE_DURATION)
+        return True
+    except traci.TraCIException:
+        return False
+
+
+def apply_approach_turn_decision_to_vehicle(
+    veh_id,
+    turn_index,
+    raw_graph,
+    edge_metadata,
+    core_edges,
+    rng,
+    args,
+    recent_edges=None,
+):
+    if not APPROACH_DECISION_INDEX:
+        return False
+
+    recent_edges = tuple(recent_edges or ())
+
+    try:
+        lane_id = traci.vehicle.getLaneID(veh_id)
+        lane_pos = traci.vehicle.getLanePosition(veh_id)
+        lane_len = traci.lane.getLength(lane_id)
+    except traci.TraCIException:
+        return False
+
+    if lane_id.startswith(":"):
+        return False
+
+    current_edge = lane_to_edge(lane_id)
+    lane_info = APPROACH_DECISION_INDEX.get(current_edge)
+
+    if current_edge is None or lane_info is None:
+        return False
+
+    distance_to_end = lane_len - lane_pos
+    key = (veh_id, current_edge)
+
+    existing = APPROACH_TURN_DECISIONS.get(key)
+    if existing is not None:
+        return enforce_approach_target_lane(
+            veh_id=veh_id,
+            target_lane_index=existing.get("target_lane_index"),
+            distance_to_end=distance_to_end,
+        )
+
+    if distance_to_end > APPROACH_DECISION_MAX_DISTANCE_TO_END:
+        return False
+
+    if distance_to_end < APPROACH_DECISION_MIN_DISTANCE_TO_END:
+        # Too late to safely impose a new movement/lane choice. SUMO should keep
+        # following the existing route instead of making a dangerous last-second
+        # lane change.
+        return False
+
+    options_by_group = build_approach_options_for_vehicle(
+        lane_info=lane_info,
+        current_lane=lane_id,
+        distance_to_end=distance_to_end,
+    )
+
+    if not options_by_group:
+        return False
+
+    loop_safe_options_by_group = {}
+    for group, options in options_by_group.items():
+        filtered = candidate_edges_after_loop_filter(
+            candidates=options,
+            get_edge=lambda option: option.get("outgoing_edge"),
+            recent_edges=recent_edges,
+            previous_edge=None,
+        )
+        if filtered:
+            loop_safe_options_by_group[group] = filtered
+
+    decision_options_by_group = loop_safe_options_by_group or options_by_group
+
+    movement = choose_turn_group(
+        rng=rng,
+        available_groups=decision_options_by_group,
+        turn_counts=APPROACH_TURN_COUNTS,
+        strict_split=not args.disable_strict_split,
+    )
+
+    if movement is None:
+        return False
+
+    try:
+        route = list(traci.vehicle.getRoute(veh_id))
+        route_index = traci.vehicle.getRouteIndex(veh_id)
+        previous_edge = route[route_index - 1] if route_index > 0 else None
+    except traci.TraCIException:
+        previous_edge = None
+
+    weighted_options = []
+    weights = []
+
+    for option in decision_options_by_group[movement]:
+        outgoing_edge = option["outgoing_edge"]
+
+        if outgoing_edge == previous_edge:
+            continue
+
+        base = successor_weight(
+            current_edge=current_edge,
+            next_edge=outgoing_edge,
+            previous_edge=previous_edge,
+            edge_metadata=edge_metadata,
+            core_edges=core_edges,
+            args=args,
+        )
+        lane_weight = approach_lane_preference_weight(
+            lane_info=lane_info,
+            lane_id=option["target_lane"],
+            movement=movement,
+        )
+        weighted_options.append(option)
+        weights.append(
+            base
+            * lane_weight
+            * loop_avoidance_weight_multiplier(current_edge, outgoing_edge, recent_edges)
+        )
+
+    if not weighted_options:
+        weighted_options = list(decision_options_by_group[movement])
+        weights = [1.0] * len(weighted_options)
+
+    option = weighted_choice(rng, weighted_options, weights)
+    outgoing_edge = option["outgoing_edge"]
+
+    route_ok = set_vehicle_route_for_approach_decision(
+        veh_id=veh_id,
+        current_edge=current_edge,
+        outgoing_edge=outgoing_edge,
+        previous_edge=previous_edge,
+        turn_index=turn_index,
+        raw_graph=raw_graph,
+        edge_metadata=edge_metadata,
+        core_edges=core_edges,
+        rng=rng,
+        args=args,
+        recent_edges=recent_edges,
+    )
+
+    if not route_ok:
+        return False
+
+    APPROACH_TURN_COUNTS[movement] += 1
+    APPROACH_TURN_DECISIONS[key] = {
+        "movement": movement,
+        "outgoing_edge": outgoing_edge,
+        "target_lane": option["target_lane"],
+        "target_lane_index": option["target_lane_index"],
+        "time": current_sim_time(),
+    }
+
+    enforce_approach_target_lane(
+        veh_id=veh_id,
+        target_lane_index=option["target_lane_index"],
+        distance_to_end=distance_to_end,
+    )
+
+    return True
+
+
+def prune_approach_turn_decisions(active_ids):
+    if len(APPROACH_TURN_DECISIONS) < APPROACH_DECISION_PRUNE_LIMIT:
+        return
+
+    active_ids = set(active_ids)
+    for key in list(APPROACH_TURN_DECISIONS):
+        veh_id, _ = key
+        if veh_id not in active_ids:
+            APPROACH_TURN_DECISIONS.pop(key, None)
 
 
 def apply_turn_lane_preference_to_vehicle(veh_id):
@@ -2012,11 +2770,24 @@ def choose_uncontrolled_successor(
     rng,
     args,
     turn_counts=None,
+    recent_edges=None,
 ):
     successors = raw_graph.get(current_edge, [])
 
     if not successors:
         return None
+
+    recent_edges = tuple(recent_edges or ())
+    non_backtrack_successors = [s for s in successors if s != previous_edge]
+    preferred_successors = [
+        s
+        for s in non_backtrack_successors
+        if not should_avoid_successor_for_loop(current_edge, s, recent_edges)
+    ]
+
+    # Use loop-safe candidates when possible, but never strand the route if the
+    # network only exposes one successor.
+    successors = preferred_successors or non_backtrack_successors or list(successors)
 
     # Group successors by turn movement (S/L/R) using geometry.
     groups = {"S": [], "L": [], "R": []}
@@ -2055,7 +2826,7 @@ def choose_uncontrolled_successor(
                     edge_metadata=edge_metadata,
                     core_edges=core_edges,
                     args=args,
-                )
+                ) * loop_avoidance_weight_multiplier(current_edge, s, recent_edges)
                 for s in candidates
             ]
             chosen = weighted_choice(rng, candidates, weights)
@@ -2063,7 +2834,7 @@ def choose_uncontrolled_successor(
             return chosen
     
     # Fallback: weight all successors (including unclassified) normally.
-    candidates = [s for s in successors if s != previous_edge] or list(successors)
+    candidates = list(successors)
     weights = [
         successor_weight(
             current_edge=current_edge,
@@ -2072,7 +2843,7 @@ def choose_uncontrolled_successor(
             edge_metadata=edge_metadata,
             core_edges=core_edges,
             args=args,
-        )
+        ) * loop_avoidance_weight_multiplier(current_edge, s, recent_edges)
         for s in candidates
     ]
     return weighted_choice(rng, candidates, weights)
@@ -2088,7 +2859,10 @@ def choose_next_edge(
     rng,
     turn_counts,
     args,
+    recent_edges=None,
 ):
+    recent_edges = tuple(recent_edges or ())
+
     if current_edge in turn_index:
         tls_map = turn_index[current_edge]
 
@@ -2096,14 +2870,36 @@ def choose_next_edge(
             options_by_group = tls_map[tls_id]
 
             available = {
-                group: options
+                group: list(options)
                 for group, options in options_by_group.items()
                 if options
             }
 
+            if not available:
+                continue
+
+            # First remove choices that immediately send the vehicle back into
+            # its own recent path.  If any loop-safe movement groups remain,
+            # choose the S/R/L group from those groups.  This is important: the
+            # older version chose S/R/L first and only filtered inside that one
+            # group, so it could still choose a cyclic straight/right movement
+            # even when a non-cyclic left/right/straight option existed.
+            loop_safe_available = {}
+            for group, options in available.items():
+                filtered = candidate_edges_after_loop_filter(
+                    candidates=options,
+                    get_edge=lambda option: option.get("outgoing_edge"),
+                    recent_edges=recent_edges,
+                    previous_edge=previous_edge,
+                )
+                if filtered:
+                    loop_safe_available[group] = filtered
+
+            decision_pool = loop_safe_available or available
+
             group = choose_turn_group(
                 rng=rng,
-                available_groups=available,
+                available_groups=decision_pool,
                 turn_counts=turn_counts,
                 strict_split=not args.disable_strict_split,
             )
@@ -2111,14 +2907,14 @@ def choose_next_edge(
             if group is None:
                 continue
 
-            options = list(available[group])
+            options = list(decision_pool[group])
             weighted_options = []
             weights = []
 
             for option in options:
                 outgoing_edge = option["outgoing_edge"]
 
-                if outgoing_edge == previous_edge:
+                if outgoing_edge == previous_edge and len(options) > 1:
                     continue
 
                 # Allow straight movements onto boundary/dead-end edges that
@@ -2136,7 +2932,7 @@ def choose_next_edge(
                         edge_metadata=edge_metadata,
                         core_edges=core_edges,
                         args=args,
-                    )
+                    ) * loop_avoidance_weight_multiplier(current_edge, outgoing_edge, recent_edges)
                 )
 
             if not weighted_options:
@@ -2155,8 +2951,8 @@ def choose_next_edge(
         rng=rng,
         args=args,
         turn_counts=turn_counts,
+        recent_edges=recent_edges,
     )
-
 
 def build_random_walk_route(
     start_edge,
@@ -2169,11 +2965,14 @@ def build_random_walk_route(
     turn_counts,
     args,
     previous_edge=None,
+    initial_recent_edges=None,
 ):
     route = [start_edge]
     current_edge = start_edge
+    initial_recent_edges = tuple(initial_recent_edges or ())
 
     for _ in range(lookahead_edges - 1):
+        recent_edges = tuple((list(initial_recent_edges) + route)[-LOOP_MEMORY_EDGES:])
         next_edge = choose_next_edge(
             current_edge=current_edge,
             previous_edge=previous_edge,
@@ -2184,6 +2983,7 @@ def build_random_walk_route(
             rng=rng,
             turn_counts=turn_counts,
             args=args,
+            recent_edges=recent_edges,
         )
 
         if next_edge is None:
@@ -2192,12 +2992,19 @@ def build_random_walk_route(
         if next_edge == current_edge:
             break
 
+        # Do not knowingly create a repeated tail pattern such as
+        # A -> B -> A -> B or A -> B -> C -> A -> B -> C.  If this happens,
+        # stop the planned extension here; the next extension/recovery will
+        # choose a different target instead of committing to the loop.
+        tentative = route + [next_edge]
+        if has_repeated_tail_pattern(list(initial_recent_edges) + tentative):
+            break
+
         route.append(next_edge)
         previous_edge = current_edge
         current_edge = next_edge
 
     return route
-
 
 def recover_vehicle_route(
     veh_id,
@@ -2209,8 +3016,11 @@ def recover_vehicle_route(
     rng,
     turn_counts,
     args,
+    recent_edges=None,
 ):
-    core_list = list(core_edges)
+    core_list = [edge for edge in core_edges if edge not in LOOP_AVOIDANCE_PROTECTED_EDGES]
+    if not core_list:
+        core_list = list(core_edges)
 
     for _ in range(args.recovery_attempts):
         target_edge = weighted_choice(
@@ -2249,6 +3059,7 @@ def recover_vehicle_route(
                 rng=rng,
                 turn_counts=turn_counts,
                 args=args,
+                initial_recent_edges=tuple(recent_edges or ()) + tuple(path_edges),
             )
 
             if len(extension) < 2:
@@ -2279,8 +3090,10 @@ def extend_vehicle_route(
     rng,
     turn_counts,
     args,
+    recent_edges=None,
 ):
     try:
+        recent_edges = tuple(recent_edges or ())
         lane_id = traci.vehicle.getLaneID(veh_id)
         current_edge = lane_to_edge(lane_id)
 
@@ -2302,8 +3115,20 @@ def extend_vehicle_route(
                 else:
                     remaining = [current_edge]
 
-        if len(remaining) >= min_remaining_edges:
+        force_loop_reroute = (
+            current_edge in LOOP_AVOIDANCE_PROTECTED_EDGES
+            or any(edge in LOOP_AVOIDANCE_PROTECTED_EDGES for edge in remaining[:3])
+            or has_repeated_tail_pattern(recent_edges)
+        )
+
+        if len(remaining) >= min_remaining_edges and not force_loop_reroute:
             return False, False
+
+        if force_loop_reroute:
+            # Rewrite the route now instead of letting the vehicle follow a small
+            # local cycle repeatedly. The new random-walk route will avoid recent
+            # edges and strongly avoid the protected two-road loop.
+            remaining = [current_edge]
 
         last_edge = remaining[-1]
         previous_edge = remaining[-2] if len(remaining) >= 2 else None
@@ -2319,6 +3144,7 @@ def extend_vehicle_route(
                 rng=rng,
                 turn_counts=turn_counts,
                 args=args,
+                recent_edges=recent_edges,
             )
 
             return recovered, recovered
@@ -2334,6 +3160,7 @@ def extend_vehicle_route(
             turn_counts=turn_counts,
             args=args,
             previous_edge=previous_edge,
+            initial_recent_edges=recent_edges,
         )
 
         if len(extension) < 2:
@@ -2347,6 +3174,7 @@ def extend_vehicle_route(
                 rng=rng,
                 turn_counts=turn_counts,
                 args=args,
+                recent_edges=recent_edges,
             )
 
             return recovered, recovered
@@ -2519,11 +3347,11 @@ def count_active_vehicle_road_categories(edge_metadata):
     return counts
 
 
-def print_turn_summary(turn_counts):
+def print_turn_summary(turn_counts, title="Dynamic planned turn-decision summary"):
     total = turn_counts["S"] + turn_counts["R"] + turn_counts["L"]
 
     print()
-    print("Dynamic planned turn-decision summary")
+    print(title)
     print("=" * 76)
 
     for group, name in [("S", "Straight"), ("R", "Right"), ("L", "Left")]:
@@ -2579,7 +3407,18 @@ def run_simulation_steps(
             args=args,
         )
 
-    for veh_id in list(traci.vehicle.getIDList()):
+    active_vehicle_ids = list(traci.vehicle.getIDList())
+    prune_vehicle_edge_history(active_vehicle_ids)
+
+    for veh_id in active_vehicle_ids:
+        try:
+            current_lane_for_history = traci.vehicle.getLaneID(veh_id)
+            current_edge_for_history = lane_to_edge(current_lane_for_history)
+        except traci.TraCIException:
+            current_edge_for_history = None
+
+        recent_edges = update_vehicle_edge_history(veh_id, current_edge_for_history)
+
         extended, recovered = extend_vehicle_route(
             veh_id=veh_id,
             min_remaining_edges=args.min_remaining_edges,
@@ -2591,6 +3430,7 @@ def run_simulation_steps(
             rng=rng,
             turn_counts=turn_counts,
             args=args,
+            recent_edges=recent_edges,
         )
 
         if extended:
@@ -2599,9 +3439,25 @@ def run_simulation_steps(
         if recovered:
             recovered_total += 1
 
+        # Make the actual S/R/L movement decision as the vehicle approaches
+        # the next intersection, then request a safe lane change toward the
+        # best lane for that movement.
+        apply_approach_turn_decision_to_vehicle(
+            veh_id=veh_id,
+            turn_index=turn_index,
+            raw_graph=raw_graph,
+            edge_metadata=edge_metadata,
+            core_edges=core_edges,
+            rng=rng,
+            args=args,
+            recent_edges=recent_edges,
+        )
+
         # Keep straight-through vehicles out of shared right/straight lanes
-        # whenever a dedicated straight lane exists on the same approach.
+        # whenever a dedicated straight/no-right lane exists on the same approach.
         apply_turn_lane_preference_to_vehicle(veh_id)
+
+    prune_approach_turn_decisions(traci.vehicle.getIDList())
 
     for _ in range(num_steps):
         sim_time = traci.simulation.getTime()
@@ -2714,8 +3570,11 @@ def run_simulation(args):
             raw_graph=raw_graph,
         )
 
-        global TURN_LANE_PREFERENCE_INDEX
-        TURN_LANE_PREFERENCE_INDEX = build_turn_lane_preference_index(controllers)
+        global TURN_LANE_PREFERENCE_INDEX, APPROACH_DECISION_INDEX
+        APPROACH_DECISION_INDEX = build_approach_decision_index(raw_graph)
+        # Use the broader all-intersection approach index for lane preference too,
+        # not only the traffic-light-controlled incoming edges.
+        TURN_LANE_PREFERENCE_INDEX = APPROACH_DECISION_INDEX
 
         sim_state = {
             "next_vehicle_id": 0,
@@ -2755,6 +3614,8 @@ def run_simulation(args):
         print("  Straight: 70.0%")
         print("  Right:    17.5%")
         print("  Left:     12.5%")
+        print("  Decisions are now made near each intersection when a safe lane change is still possible.")
+        print("  Straight vehicles prefer straight-only/no-right lanes and avoid the rightmost lane when possible.")
         print()
         print("Straight-movement fix:")
         print("  Uses SUMO lane-link directions when available.")
@@ -2767,6 +3628,7 @@ def run_simulation(args):
         print("  Cars are recovered to the full drivable graph, not one small core.")
         print("  Signal phases have randomized offsets and slight timing variation.")
         print("  Routes are planned far ahead to reduce last-second lane changes.")
+        print("  Per-vehicle route memory prevents repeated cycle-like paths.")
         print()
         print(f"Active vehicle cap: {args.max_vehicles}")
         print(f"Target active cars: {args.target_vehicles}")
@@ -2853,6 +3715,8 @@ def run_simulation(args):
                 )
 
                 print_turn_summary(turn_counts)
+                if sum(APPROACH_TURN_COUNTS.values()) > 0:
+                    print_turn_summary(APPROACH_TURN_COUNTS, "Actual near-intersection S/R/L decisions")
 
                 next_print_time += args.print_every
 
@@ -2867,6 +3731,8 @@ def run_simulation(args):
 
     finally:
         print_turn_summary(turn_counts)
+        if sum(APPROACH_TURN_COUNTS.values()) > 0:
+            print_turn_summary(APPROACH_TURN_COUNTS, "Actual near-intersection S/R/L decisions")
 
         try:
             traci.close()
