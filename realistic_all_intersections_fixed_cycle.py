@@ -1533,6 +1533,65 @@ def classify_tls_movements(tls_id):
     return state_length, movement_map
 
 
+def movement_input_lanes(movement_map, label):
+    lanes = set()
+
+    for lane_sets in movement_map.get(label, {}).values():
+        lanes.update(lane_sets.get("in", set()))
+
+    return lanes
+
+
+def left_straight_companion_label(label):
+    if not label or "-" not in label:
+        return None
+
+    approach, movement = label.split("-", 1)
+
+    if movement == "L":
+        return f"{approach}-S"
+
+    if movement == "S":
+        return f"{approach}-L"
+
+    return None
+
+
+def labels_share_an_input_lane(movement_map, label_a, label_b):
+    lanes_a = movement_input_lanes(movement_map, label_a)
+    lanes_b = movement_input_lanes(movement_map, label_b)
+    return bool(lanes_a & lanes_b)
+
+
+def shared_left_straight_permissive_labels(movement_map, core_labels):
+    """Return permissive companion labels for shared left/straight lanes.
+
+    If a lane can serve both left and straight traffic, the movement that is not
+    currently protected should still be allowed with lowercase green (g).  This
+    prevents a straight car from blocking left-turn cars during the protected
+    left phase, and prevents a left-turn car from blocking straight cars during
+    the straight phase.  Lowercase green makes the companion movement yield to
+    the protected movement.
+    """
+    permissive = []
+
+    for core_label in core_labels:
+        companion = left_straight_companion_label(core_label)
+
+        if companion is None:
+            continue
+
+        if not movement_map.get(companion):
+            continue
+
+        if not labels_share_an_input_lane(movement_map, core_label, companion):
+            continue
+
+        permissive.append(companion)
+
+    return sorted(set(permissive))
+
+
 def build_safe_phase_plan(movement_map):
     phases = []
 
@@ -1551,6 +1610,17 @@ def build_safe_phase_plan(movement_map):
         for label in phase_def["core"]:
             rules[label] = "G"
 
+        permissive_labels = shared_left_straight_permissive_labels(
+            movement_map=movement_map,
+            core_labels=existing_core,
+        )
+
+        for label in permissive_labels:
+            # Keep protected movements protected if a strange TLS exposes the
+            # same label as both core and permissive.
+            if rules.get(label) != "G":
+                rules[label] = "g"
+
         rules.update(ALL_RIGHT_TURNS)
 
         phases.append({
@@ -1558,6 +1628,7 @@ def build_safe_phase_plan(movement_map):
             "name": phase_def["name"],
             "rules": rules,
             "core_labels": existing_core,
+            "permissive_labels": permissive_labels,
         })
 
     return phases
@@ -1626,7 +1697,11 @@ def verify_controller_safety(tls_id, controller):
     messages = []
 
     for phase in controller["phases"]:
-        allowed_labels = set(phase["core_labels"]) | right_turn_labels
+        allowed_labels = (
+            set(phase["core_labels"])
+            | set(phase.get("permissive_labels", []))
+            | right_turn_labels
+        )
 
         state, _ = build_state_from_movements(
             controller["state_length"],
@@ -4057,6 +4132,9 @@ def run_simulation(args):
         print("  2. N/S straights")
         print("  3. E/W protected lefts")
         print("  4. E/W straights")
+        print("  Shared left/straight lanes are handled permissively:")
+        print("    - during a straight phase, same-lane left turns get lowercase green and yield")
+        print("    - during a protected-left phase, same-lane straight movements get lowercase green and yield")
         print()
         print("Dynamic movement target:")
         print("  Straight: 70.0%")
