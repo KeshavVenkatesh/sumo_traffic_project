@@ -1,4 +1,5 @@
 import argparse
+import csv
 import math
 import os
 import random
@@ -173,11 +174,35 @@ LOOP_AVOIDANCE_PROTECTED_EDGES = {
     "-417109221#0",
     "417109200",
 }
-LOOP_MEMORY_EDGES = 20
-# After this many consecutive straight decisions for one vehicle, force a turn.
-MAX_CONSECUTIVE_STRAIGHT = 4
+
+# Hardcoded local-loop kill switch.
+# These two roads are not allowed to be ordinary random-cruising choices.
+# Vehicles already on them may leave the area, but new random routes, approach
+# decisions, spawns, and recoveries will not deliberately send vehicles into
+# them. This is stronger than the general anti-cycle weighting above.
+HARDCODED_NO_CRUISE_LOOP_LANES = {
+    "-417109221#0_0",
+    "417109200_1",
+}
+HARDCODED_NO_CRUISE_LOOP_EDGES = {
+    "-417109221#0",
+    "417109200",
+}
+
+# Lane-level diagnostics for the observed cycle/phantom-loop area.
+# By default this prints and logs every vehicle that enters/passes/exits lane
+# -417109192_1 so you can see whether the car is being routed in a loop,
+# held by keep-clear, forced into a lane, or sent back by route extension.
+DEFAULT_WATCH_LANE = "-417109192_1"
+WATCH_LANE_PRINT_EVERY = 1.0
+WATCH_LANE_RECENT_EDGE_COUNT = 10
+WATCH_LANE_ROUTE_WINDOW_BEFORE = 3
+WATCH_LANE_ROUTE_WINDOW_AFTER = 8
+LOOP_MEMORY_EDGES = 8
 LOOP_RECENT_EDGE_PENALTY = 0.03
 LOOP_PROTECTED_TRANSITION_PENALTY = 0.001
+# Accepted for compatibility with the anti-cycle version of this script.
+MAX_CONSECUTIVE_STRAIGHT = 4
 
 # General per-vehicle route-memory loop breaker.  The older fix only handled
 # one observed two-road loop.  This prevents the same cycle pattern from
@@ -186,9 +211,9 @@ LOOP_PROTECTED_TRANSITION_PENALTY = 0.001
 VEHICLE_ROUTE_MEMORY_EDGES = 18
 VEHICLE_EDGE_HISTORY = defaultdict(lambda: deque(maxlen=VEHICLE_ROUTE_MEMORY_EDGES))
 VEHICLE_LAST_EDGE = {}
-SHORT_LOOP_MAX_PERIOD = 10
+SHORT_LOOP_MAX_PERIOD = 5
 SHORT_LOOP_MIN_REPEATS = 2
-RECENT_EDGE_HARD_AVOID_LOOKBACK = 20
+RECENT_EDGE_HARD_AVOID_LOOKBACK = 14
 
 MOVEMENT_LABELS = [
     "NB-L", "NB-S", "NB-R",
@@ -292,9 +317,69 @@ def is_loop_avoidance_location(lane_id=None, edge_id=None):
     return edge_id in LOOP_AVOIDANCE_PROTECTED_EDGES
 
 
+def is_hardcoded_no_cruise_loop_location(lane_id=None, edge_id=None):
+    if lane_id in HARDCODED_NO_CRUISE_LOOP_LANES:
+        return True
+
+    if edge_id is None and lane_id is not None:
+        edge_id = lane_to_edge(lane_id)
+
+    return edge_id in HARDCODED_NO_CRUISE_LOOP_EDGES
+
+
+def remove_hardcoded_loop_region_from_graph(raw_graph):
+    """Remove the observed two-road loop from normal random driving.
+
+    This does not delete the roads from SUMO. It only removes them from the
+    script's random route graph, so cars are not spawned onto them and route
+    planning/approach decisions do not deliberately choose them. If a vehicle is
+    already there because of an old route or SUMO routing, recovery sends it out.
+    """
+    blocked = set(HARDCODED_NO_CRUISE_LOOP_EDGES)
+    cleaned = {}
+    removed_nodes = 0
+    removed_successors = 0
+
+    for edge_id, successors in raw_graph.items():
+        if edge_id in blocked:
+            removed_nodes += 1
+            continue
+
+        filtered = []
+        for successor in successors:
+            if successor in blocked:
+                removed_successors += 1
+                continue
+            filtered.append(successor)
+
+        if filtered:
+            cleaned[edge_id] = filtered
+
+    print()
+    print("Hardcoded loop-region rule:")
+    print(f"  no-cruise edges:       {sorted(blocked)}")
+    print(f"  removed graph nodes:   {removed_nodes}")
+    print(f"  removed graph choices: {removed_successors}")
+
+    return cleaned
+
+
+def route_enters_hardcoded_loop_region(route_edges, allowed_first_edge=None):
+    for index, edge_id in enumerate(route_edges):
+        if edge_id not in HARDCODED_NO_CRUISE_LOOP_EDGES:
+            continue
+        if index == 0 and edge_id == allowed_first_edge:
+            continue
+        return True
+    return False
+
+
 def should_avoid_successor_for_loop(current_edge, next_edge, recent_edges=None):
     if not next_edge:
         return False
+
+    if next_edge in HARDCODED_NO_CRUISE_LOOP_EDGES:
+        return True
 
     if (
         current_edge in LOOP_AVOIDANCE_PROTECTED_EDGES
@@ -310,6 +395,9 @@ def should_avoid_successor_for_loop(current_edge, next_edge, recent_edges=None):
 
 def loop_avoidance_weight_multiplier(current_edge, next_edge, recent_edges=None):
     multiplier = 1.0
+
+    if next_edge in HARDCODED_NO_CRUISE_LOOP_EDGES:
+        multiplier *= 1e-9
 
     if (
         current_edge in LOOP_AVOIDANCE_PROTECTED_EDGES
@@ -1535,14 +1623,6 @@ def verify_controller_safety(tls_id, controller):
     labels_by_idx = labels_by_signal_index(tls_id)
     right_turn_labels = present_right_turn_labels(labels_by_idx)
 
-    # Determine which signal indices are explicitly managed by the movement_map.
-    # Unmanaged indices (e.g. extra approaches in large merged clusters) are
-    # given permissive green by apply_phase_state and should not be flagged.
-    managed_indices = set()
-    for label_data in controller["movement_map"].values():
-        for signal_index in label_data:
-            managed_indices.add(signal_index)
-
     messages = []
 
     for phase in controller["phases"]:
@@ -1560,9 +1640,7 @@ def verify_controller_safety(tls_id, controller):
         for idx, char in enumerate(state):
             if char not in ("G", "g"):
                 continue
-            # Only count managed indices toward safety checks.
-            if idx not in managed_indices:
-                continue
+
             active_labels.update(labels_by_idx.get(idx, set()))
 
         bad_labels = active_labels - allowed_labels
@@ -1627,16 +1705,7 @@ def build_state_from_movements(
     phase_rules,
     check_space=True,
 ):
-    # Determine which signal indices are managed by any movement label.
-    # Unmanaged indices (extra approaches in large merged clusters) get
-    # permissive green so they are never permanently blocked.
-    all_managed_indices = set()
-    for label_data in movement_map.values():
-        for signal_index in label_data:
-            all_managed_indices.add(signal_index)
-
-    # Start managed indices as "r"; unmanaged as "g" (permissive yield).
-    state = ["g" if i not in all_managed_indices else "r" for i in range(state_length)]
+    state = ["r"] * state_length
     active_indices = set()
 
     for movement_label, signal_char in phase_rules.items():
@@ -1659,11 +1728,6 @@ def build_state_from_movements(
                 state[signal_index] = "g"
 
             active_indices.add(signal_index)
-
-    # Count unmanaged indices as active.
-    for i in range(state_length):
-        if i not in all_managed_indices:
-            active_indices.add(i)
 
     return "".join(state), active_indices
 
@@ -1898,10 +1962,16 @@ def build_turn_decision_index(controllers, raw_graph):
                     if incoming_edge is None or incoming_edge not in allowed_edges:
                         continue
 
+                    if incoming_edge in HARDCODED_NO_CRUISE_LOOP_EDGES:
+                        continue
+
                     for out_lane in lane_sets["out"]:
                         outgoing_edge = lane_to_edge(out_lane)
 
                         if outgoing_edge is None:
+                            continue
+
+                        if outgoing_edge in HARDCODED_NO_CRUISE_LOOP_EDGES:
                             continue
 
                         # For straight movements, allow outgoing edges that are
@@ -2081,6 +2151,9 @@ def build_approach_decision_index(raw_graph):
                 outgoing_edge = lane_to_edge(out_lane)
 
                 if outgoing_edge is None:
+                    continue
+
+                if outgoing_edge in HARDCODED_NO_CRUISE_LOOP_EDGES:
                     continue
 
                 if outgoing_edge not in successor_set and outgoing_edge not in raw_edge_set:
@@ -2356,6 +2429,9 @@ def set_vehicle_route_for_approach_decision(
 
     continuation_counts = Counter()
 
+    if outgoing_edge in HARDCODED_NO_CRUISE_LOOP_EDGES:
+        return False
+
     if outgoing_edge in raw_graph:
         continuation = build_random_walk_route(
             start_edge=outgoing_edge,
@@ -2513,6 +2589,9 @@ def apply_approach_turn_decision_to_vehicle(
         outgoing_edge = option["outgoing_edge"]
 
         if outgoing_edge == previous_edge:
+            continue
+
+        if outgoing_edge in HARDCODED_NO_CRUISE_LOOP_EDGES:
             continue
 
         base = successor_weight(
@@ -2797,7 +2876,6 @@ def choose_uncontrolled_successor(
     args,
     turn_counts=None,
     recent_edges=None,
-    straight_streak=0,
 ):
     successors = raw_graph.get(current_edge, [])
 
@@ -2831,10 +2909,6 @@ def choose_uncontrolled_successor(
 
     # Build available dict — only groups with options.
     available = {g: edges for g, edges in groups.items() if edges}
-
-    # Force a turn after too many consecutive straights.
-    if straight_streak >= args.max_consecutive_straight and len(available) > 1:
-        available = {g: edges for g, edges in available.items() if g != "S"}
 
     if available and turn_counts is not None:
         # Pick a movement group honouring TURN_PROBABILITIES.
@@ -2891,7 +2965,6 @@ def choose_next_edge(
     turn_counts,
     args,
     recent_edges=None,
-    straight_streak=0,
 ):
     recent_edges = tuple(recent_edges or ())
 
@@ -2949,6 +3022,9 @@ def choose_next_edge(
                 if outgoing_edge == previous_edge and len(options) > 1:
                     continue
 
+                if outgoing_edge in HARDCODED_NO_CRUISE_LOOP_EDGES:
+                    continue
+
                 # Allow straight movements onto boundary/dead-end edges that
                 # aren't in raw_graph — the vehicle will be recovered from
                 # there by the normal recovery mechanism.
@@ -2984,7 +3060,6 @@ def choose_next_edge(
         args=args,
         turn_counts=turn_counts,
         recent_edges=recent_edges,
-        straight_streak=straight_streak,
     )
 
 def build_random_walk_route(
@@ -2999,12 +3074,10 @@ def build_random_walk_route(
     args,
     previous_edge=None,
     initial_recent_edges=None,
-    initial_straight_streak=0,
 ):
     route = [start_edge]
     current_edge = start_edge
     initial_recent_edges = tuple(initial_recent_edges or ())
-    straight_streak = initial_straight_streak
 
     for _ in range(lookahead_edges - 1):
         recent_edges = tuple((list(initial_recent_edges) + route)[-LOOP_MEMORY_EDGES:])
@@ -3019,18 +3092,12 @@ def build_random_walk_route(
             turn_counts=turn_counts,
             args=args,
             recent_edges=recent_edges,
-            straight_streak=straight_streak,
         )
 
         if next_edge is None:
             break
 
         if next_edge == current_edge:
-            break
-
-        # Hard stop: never visit an edge already in this route extension.
-        # This prevents cars from circling a fixed loop indefinitely.
-        if next_edge in route:
             break
 
         # Do not knowingly create a repeated tail pattern such as
@@ -3040,10 +3107,6 @@ def build_random_walk_route(
         tentative = route + [next_edge]
         if has_repeated_tail_pattern(list(initial_recent_edges) + tentative):
             break
-
-        # Update consecutive-straight streak.
-        movement = classify_edge_successor_movement(current_edge, next_edge)
-        straight_streak = straight_streak + 1 if movement == "S" else 0
 
         route.append(next_edge)
         previous_edge = current_edge
@@ -3094,6 +3157,12 @@ def recover_vehicle_route(
             if len(path_edges) < 2:
                 continue
 
+            if route_enters_hardcoded_loop_region(
+                path_edges,
+                allowed_first_edge=current_edge if current_edge in HARDCODED_NO_CRUISE_LOOP_EDGES else None,
+            ):
+                continue
+
             extension = build_random_walk_route(
                 start_edge=target_edge,
                 lookahead_edges=args.route_lookahead_edges,
@@ -3136,7 +3205,6 @@ def extend_vehicle_route(
     turn_counts,
     args,
     recent_edges=None,
-    sim_state=None,
 ):
     try:
         recent_edges = tuple(recent_edges or ())
@@ -3195,7 +3263,6 @@ def extend_vehicle_route(
 
             return recovered, recovered
 
-        veh_streak = (sim_state or {}).get("straight_streak", {}).get(veh_id, 0)
         extension = build_random_walk_route(
             start_edge=last_edge,
             lookahead_edges=lookahead_edges,
@@ -3208,18 +3275,7 @@ def extend_vehicle_route(
             args=args,
             previous_edge=previous_edge,
             initial_recent_edges=recent_edges,
-            initial_straight_streak=veh_streak,
         )
-        # Update streak: count trailing straights in the new extension.
-        if sim_state is not None:
-            streak = 0
-            for i in range(len(extension) - 1, 0, -1):
-                m = classify_edge_successor_movement(extension[i-1], extension[i])
-                if m == "S":
-                    streak += 1
-                else:
-                    break
-            sim_state.setdefault("straight_streak", {})[veh_id] = streak
 
         if len(extension) < 2:
             recovered = recover_vehicle_route(
@@ -3355,6 +3411,336 @@ def fill_vehicle_population(
     return spawned
 
 
+
+# ============================================================
+# Watched-lane diagnostics
+# ============================================================
+
+def sanitize_filename_part(value):
+    return re.sub(r"[^A-Za-z0-9_.#-]+", "_", str(value))
+
+
+def default_watch_lane_csv_path(lane_id):
+    return os.path.join(
+        BASE_DIR,
+        f"watched_lane_{sanitize_filename_part(lane_id)}_metrics.csv",
+    )
+
+
+def initialize_watch_lane_metrics(sim_state, args):
+    lane_id = getattr(args, "watch_lane", "") or ""
+
+    if getattr(args, "disable_watch_lane_metrics", False) or not lane_id:
+        sim_state["watch_lane_enabled"] = False
+        return
+
+    csv_path = getattr(args, "watch_lane_csv", "") or default_watch_lane_csv_path(lane_id)
+    sim_state["watch_lane_enabled"] = True
+    sim_state["watch_lane_csv_path"] = csv_path
+    sim_state["watch_lane_active"] = {}
+    sim_state["watch_lane_last_print"] = {}
+    sim_state["watch_lane_seen"] = set()
+
+    fieldnames = watched_lane_metric_fieldnames()
+    try:
+        with open(csv_path, "w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+    except OSError as exc:
+        print(f"WARNING: could not create watched-lane CSV {csv_path}: {exc}")
+
+    print()
+    print("Watched-lane diagnostics enabled:")
+    print(f"  lane:      {lane_id}")
+    print(f"  CSV file:  {csv_path}")
+    print(f"  interval:  {getattr(args, 'watch_lane_print_every', WATCH_LANE_PRINT_EVERY):.1f}s")
+
+
+def watched_lane_metric_fieldnames():
+    return [
+        "time",
+        "event",
+        "veh_id",
+        "lane_id",
+        "edge_id",
+        "lane_pos_m",
+        "lane_len_m",
+        "dist_to_end_m",
+        "speed_mps",
+        "waiting_s",
+        "route_index",
+        "prev_edge",
+        "current_edge",
+        "next_edge",
+        "next2_edge",
+        "movement_to_next",
+        "next_edge_has_space",
+        "internal_path_clear",
+        "keep_clear_held",
+        "keep_clear_hold_s",
+        "keep_clear_cooldown_s",
+        "approach_decision",
+        "leader",
+        "recent_edges",
+        "route_window",
+        "on_loop_avoidance_edge",
+        "on_hardcoded_no_cruise_edge",
+    ]
+
+
+def short_join(items, sep=" > "):
+    return sep.join(str(item) for item in items if item is not None)
+
+
+def find_approach_decision_for_vehicle(veh_id, current_edge):
+    direct = APPROACH_TURN_DECISIONS.get((veh_id, current_edge))
+    if direct is not None:
+        return direct
+
+    for (stored_veh_id, _stored_edge), decision in APPROACH_TURN_DECISIONS.items():
+        if stored_veh_id == veh_id:
+            return decision
+
+    return None
+
+
+def vehicle_route_context(veh_id, current_edge):
+    try:
+        route = list(traci.vehicle.getRoute(veh_id))
+        route_index = traci.vehicle.getRouteIndex(veh_id)
+    except traci.TraCIException:
+        return {
+            "route": [],
+            "route_index": -1,
+            "prev_edge": None,
+            "next_edge": None,
+            "next2_edge": None,
+            "route_window": "",
+        }
+
+    if route_index < 0 or route_index >= len(route):
+        try:
+            route_index = route.index(current_edge)
+        except ValueError:
+            route_index = -1
+
+    prev_edge = route[route_index - 1] if route_index > 0 else None
+    next_edge = route[route_index + 1] if 0 <= route_index + 1 < len(route) else None
+    next2_edge = route[route_index + 2] if 0 <= route_index + 2 < len(route) else None
+
+    if route_index >= 0:
+        lo = max(0, route_index - WATCH_LANE_ROUTE_WINDOW_BEFORE)
+        hi = min(len(route), route_index + WATCH_LANE_ROUTE_WINDOW_AFTER)
+        window = route[lo:hi]
+    else:
+        window = route[:WATCH_LANE_ROUTE_WINDOW_AFTER]
+
+    return {
+        "route": route,
+        "route_index": route_index,
+        "prev_edge": prev_edge,
+        "next_edge": next_edge,
+        "next2_edge": next2_edge,
+        "route_window": short_join(window),
+    }
+
+
+def watched_lane_snapshot(veh_id, event):
+    sim_time = current_sim_time()
+
+    try:
+        lane_id = traci.vehicle.getLaneID(veh_id)
+        edge_id = lane_to_edge(lane_id)
+        lane_pos = traci.vehicle.getLanePosition(veh_id)
+        lane_len = cached_lane_length(lane_id)
+        speed = traci.vehicle.getSpeed(veh_id)
+        waiting = traci.vehicle.getWaitingTime(veh_id)
+    except traci.TraCIException:
+        return None
+
+    dist_to_end = max(0.0, lane_len - lane_pos) if lane_len else 0.0
+    route_ctx = vehicle_route_context(veh_id, edge_id)
+    next_edge = route_ctx["next_edge"]
+
+    movement = None
+    next_space = ""
+    internal_clear = ""
+
+    if edge_id and next_edge:
+        try:
+            movement = classify_edge_successor_movement(edge_id, next_edge)
+        except Exception:
+            movement = None
+
+        try:
+            next_space = next_edge_has_exit_space(next_edge)
+        except Exception:
+            next_space = "unknown"
+
+        try:
+            internal_clear = internal_junction_path_is_clear(lane_id, next_edge)
+        except Exception:
+            internal_clear = "unknown"
+
+    keep_clear_held = veh_id in KEEP_CLEAR_HELD_VEHICLES
+    hold_start = KEEP_CLEAR_HOLD_START_TIME.get(veh_id)
+    keep_clear_hold_s = (sim_time - hold_start) if hold_start is not None else 0.0
+    cooldown_until = KEEP_CLEAR_FORCE_RELEASE_UNTIL.get(veh_id, -1.0)
+    keep_clear_cooldown_s = max(0.0, cooldown_until - sim_time)
+
+    try:
+        leader = traci.vehicle.getLeader(veh_id, 80.0)
+    except traci.TraCIException:
+        leader = None
+
+    if leader is None:
+        leader_text = ""
+    else:
+        leader_text = f"{leader[0]}@{leader[1]:.1f}m"
+
+    decision = find_approach_decision_for_vehicle(veh_id, edge_id)
+    if decision:
+        decision_text = (
+            f"{decision.get('movement')}->{decision.get('outgoing_edge')}"
+            f" lane={decision.get('target_lane')}"
+        )
+    else:
+        decision_text = ""
+
+    recent_edges = list(vehicle_recent_edges(veh_id))[-WATCH_LANE_RECENT_EDGE_COUNT:]
+
+    return {
+        "time": f"{sim_time:.1f}",
+        "event": event,
+        "veh_id": veh_id,
+        "lane_id": lane_id,
+        "edge_id": edge_id or "",
+        "lane_pos_m": f"{lane_pos:.1f}",
+        "lane_len_m": f"{lane_len:.1f}",
+        "dist_to_end_m": f"{dist_to_end:.1f}",
+        "speed_mps": f"{speed:.2f}",
+        "waiting_s": f"{waiting:.1f}",
+        "route_index": route_ctx["route_index"],
+        "prev_edge": route_ctx["prev_edge"] or "",
+        "current_edge": edge_id or "",
+        "next_edge": next_edge or "",
+        "next2_edge": route_ctx["next2_edge"] or "",
+        "movement_to_next": movement or "",
+        "next_edge_has_space": next_space,
+        "internal_path_clear": internal_clear,
+        "keep_clear_held": keep_clear_held,
+        "keep_clear_hold_s": f"{keep_clear_hold_s:.1f}",
+        "keep_clear_cooldown_s": f"{keep_clear_cooldown_s:.1f}",
+        "approach_decision": decision_text,
+        "leader": leader_text,
+        "recent_edges": short_join(recent_edges),
+        "route_window": route_ctx["route_window"],
+        "on_loop_avoidance_edge": is_loop_avoidance_location(lane_id, edge_id),
+        "on_hardcoded_no_cruise_edge": is_hardcoded_no_cruise_loop_location(lane_id, edge_id),
+    }
+
+
+def append_watched_lane_csv(sim_state, row):
+    csv_path = sim_state.get("watch_lane_csv_path")
+    if not csv_path or row is None:
+        return
+
+    try:
+        with open(csv_path, "a", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=watched_lane_metric_fieldnames())
+            writer.writerow(row)
+    except OSError:
+        pass
+
+
+def print_watched_lane_row(row):
+    if row is None:
+        return
+
+    print(
+        "WATCH-LANE "
+        f"t={row['time']} "
+        f"event={row['event']:<5} "
+        f"veh={row['veh_id']} "
+        f"lane={row['lane_id']} "
+        f"pos={row['lane_pos_m']}/{row['lane_len_m']}m "
+        f"dist_end={row['dist_to_end_m']}m "
+        f"speed={row['speed_mps']}m/s "
+        f"wait={row['waiting_s']}s "
+        f"prev={row['prev_edge']} "
+        f"next={row['next_edge']} "
+        f"next2={row['next2_edge']} "
+        f"move={row['movement_to_next']} "
+        f"held={row['keep_clear_held']} "
+        f"hold_s={row['keep_clear_hold_s']} "
+        f"exit_space={row['next_edge_has_space']} "
+        f"internal_clear={row['internal_path_clear']} "
+        f"decision={row['approach_decision']} "
+        f"leader={row['leader']}"
+    )
+    print(f"    recent_edges: {row['recent_edges']}")
+    print(f"    route_window: {row['route_window']}")
+
+
+def update_watched_lane_metrics(sim_state, args):
+    if not sim_state.get("watch_lane_enabled"):
+        return
+
+    lane_id = getattr(args, "watch_lane", "") or ""
+    if not lane_id:
+        return
+
+    try:
+        current_ids = set(traci.lane.getLastStepVehicleIDs(lane_id))
+    except traci.TraCIException:
+        if not sim_state.get("watch_lane_missing_reported"):
+            print(f"WARNING: watched lane {lane_id} does not exist or is not readable yet.")
+            sim_state["watch_lane_missing_reported"] = True
+        return
+
+    sim_time = current_sim_time()
+    active = sim_state.setdefault("watch_lane_active", {})
+    last_print = sim_state.setdefault("watch_lane_last_print", {})
+    seen = sim_state.setdefault("watch_lane_seen", set())
+    print_every = max(0.1, float(getattr(args, "watch_lane_print_every", WATCH_LANE_PRINT_EVERY)))
+
+    # Vehicles currently on the watched lane: print ENTER once and ON periodically.
+    for veh_id in sorted(current_ids):
+        if veh_id not in active:
+            active[veh_id] = sim_time
+            seen.add(veh_id)
+            row = watched_lane_snapshot(veh_id, "ENTER")
+            append_watched_lane_csv(sim_state, row)
+            print_watched_lane_row(row)
+            last_print[veh_id] = sim_time
+            continue
+
+        if sim_time - last_print.get(veh_id, -1e9) >= print_every:
+            row = watched_lane_snapshot(veh_id, "ON")
+            append_watched_lane_csv(sim_state, row)
+            print_watched_lane_row(row)
+            last_print[veh_id] = sim_time
+
+    # Vehicles that just left the watched lane.
+    for veh_id in sorted(set(active) - current_ids):
+        row = watched_lane_snapshot(veh_id, "EXIT")
+        if row is not None:
+            # Keep the watched lane in the event row so the CSV is easy to filter.
+            row["lane_id"] = lane_id
+            append_watched_lane_csv(sim_state, row)
+            print_watched_lane_row(row)
+        active.pop(veh_id, None)
+        last_print.pop(veh_id, None)
+
+    # Occasional compact summary so you know the logger is alive.
+    if sim_time >= sim_state.get("watch_lane_next_summary", 0.0):
+        print(
+            f"WATCH-LANE SUMMARY t={sim_time:.1f} "
+            f"lane={lane_id} currently_on_lane={len(current_ids)} "
+            f"unique_seen={len(seen)} csv={sim_state.get('watch_lane_csv_path', '')}"
+        )
+        sim_state["watch_lane_next_summary"] = sim_time + max(10.0, print_every * 10.0)
+
 # ============================================================
 # Metrics
 # ============================================================
@@ -3489,7 +3875,6 @@ def run_simulation_steps(
             turn_counts=turn_counts,
             args=args,
             recent_edges=recent_edges,
-            sim_state=sim_state,
         )
 
         if extended:
@@ -3536,6 +3921,8 @@ def run_simulation_steps(
 
         traci.simulationStep()
         arrived += traci.simulation.getArrivedNumber()
+
+        update_watched_lane_metrics(sim_state, args)
 
         for controller in controllers:
             if not controller.get("disabled"):
@@ -3586,6 +3973,7 @@ def run_simulation(args):
         valid_edges = get_valid_passenger_edges()
         edge_metadata = build_edge_metadata(valid_edges)
         raw_graph = build_raw_successor_graph(valid_edges)
+        raw_graph = remove_hardcoded_loop_region_from_graph(raw_graph)
 
         # IMPORTANT: do not restrict routing/spawning to only largest_loop_core(raw_graph).
         # On this map, that can be a small local subregion, which causes every car
@@ -3641,6 +4029,7 @@ def run_simulation(args):
             "next_spawn_zone_index": 0,
             "next_lane_pref_time": 0.0,
         }
+        initialize_watch_lane_metrics(sim_state, args)
 
         initial_spawned = fill_vehicle_population(
             sim_state=sim_state,
@@ -3685,6 +4074,7 @@ def run_simulation(args):
         print("  Residential-to-residential cruising is penalized.")
         print("  Cars are spawned across geographic zones covering the full map.")
         print("  Cars are recovered to the full drivable graph, not one small core.")
+        print("  The observed two-road local loop is hard-blocked from normal random routing.")
         print("  Signal phases have randomized offsets and slight timing variation.")
         print("  Routes are planned far ahead to reduce last-second lane changes.")
         print("  Per-vehicle route memory prevents repeated cycle-like paths.")
@@ -3924,10 +4314,38 @@ def main():
     parser.add_argument(
         "--max-consecutive-straight",
         type=int,
-        default=4,
-        help="Force a turn after this many consecutive straight decisions per vehicle. Lower = more dispersion. Default 4.",
+        default=MAX_CONSECUTIVE_STRAIGHT,
+        help=(
+            "Compatibility option accepted by the watched-lane diagnostics build. "
+            "The watched-lane build focuses on metrics; loop prevention is handled by the existing route-memory and hardcoded no-cruise rules."
+        ),
     )
     parser.add_argument("--print-every", type=float, default=60.0)
+
+    parser.add_argument(
+        "--watch-lane",
+        default=DEFAULT_WATCH_LANE,
+        help="Lane to print detailed per-vehicle diagnostics for. Default: -417109192_1.",
+    )
+
+    parser.add_argument(
+        "--watch-lane-print-every",
+        type=float,
+        default=WATCH_LANE_PRINT_EVERY,
+        help="Seconds between repeated diagnostics for vehicles remaining on the watched lane.",
+    )
+
+    parser.add_argument(
+        "--watch-lane-csv",
+        default="",
+        help="Optional CSV path for watched-lane metrics. Default writes next to the script.",
+    )
+
+    parser.add_argument(
+        "--disable-watch-lane-metrics",
+        action="store_true",
+        help="Disable the watched-lane diagnostics.",
+    )
 
     parser.add_argument(
         "--disable-strict-split",
