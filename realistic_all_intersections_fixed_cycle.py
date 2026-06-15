@@ -3183,6 +3183,11 @@ def build_random_walk_route(
         if has_repeated_tail_pattern(list(initial_recent_edges) + tentative):
             break
 
+        # Don't append a dead-end edge unless it's the very first step —
+        # doing so would make the route untextendable from the tail.
+        if next_edge not in raw_graph and len(route) > 1:
+            break
+
         route.append(next_edge)
         previous_edge = current_edge
         current_edge = next_edge
@@ -3319,10 +3324,17 @@ def extend_vehicle_route(
             # edges and strongly avoid the protected two-road loop.
             remaining = [current_edge]
 
+        # Trim remaining back to the last edge that has successors in raw_graph.
+        # This prevents dead-end edges at the tail of the route from causing
+        # unnecessary recovery calls.
+        while len(remaining) > 1 and remaining[-1] not in raw_graph:
+            remaining = remaining[:-1]
+
         last_edge = remaining[-1]
         previous_edge = remaining[-2] if len(remaining) >= 2 else None
 
         if last_edge not in raw_graph:
+            # Even current_edge has no successors — full recovery needed.
             recovered = recover_vehicle_route(
                 veh_id=veh_id,
                 current_edge=current_edge,
@@ -4326,7 +4338,7 @@ def main():
     parser.add_argument(
         "--min-remaining-edges",
         type=int,
-        default=25,
+        default=15,
         help="Extend a car's route when fewer than this many edges remain.",
     )
 
@@ -4384,7 +4396,7 @@ def main():
     parser.add_argument(
         "--time-to-teleport",
         type=int,
-        default=30,
+        default=180,
         help="Last-resort gridlock breaker. Use -1 to disable teleporting entirely.",
     )
 
