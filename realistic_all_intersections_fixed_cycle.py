@@ -4326,7 +4326,7 @@ def main():
     parser.add_argument(
         "--min-remaining-edges",
         type=int,
-        default=15,
+        default=25,
         help="Extend a car's route when fewer than this many edges remain.",
     )
 
@@ -4384,7 +4384,7 @@ def main():
     parser.add_argument(
         "--time-to-teleport",
         type=int,
-        default=180,
+        default=30,
         help="Last-resort gridlock breaker. Use -1 to disable teleporting entirely.",
     )
 

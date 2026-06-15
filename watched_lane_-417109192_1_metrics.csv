@@ -1,0 +1,1 @@
+time,event,veh_id,lane_id,edge_id,lane_pos_m,lane_len_m,dist_to_end_m,speed_mps,waiting_s,route_index,prev_edge,current_edge,next_edge,next2_edge,movement_to_next,next_edge_has_space,internal_path_clear,keep_clear_held,keep_clear_hold_s,keep_clear_cooldown_s,approach_decision,leader,recent_edges,route_window,on_loop_avoidance_edge,on_hardcoded_no_cruise_edge
