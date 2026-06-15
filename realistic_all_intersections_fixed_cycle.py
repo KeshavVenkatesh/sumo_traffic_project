@@ -3368,8 +3368,10 @@ def build_random_walk_route(
         if has_repeated_tail_pattern(list(initial_recent_edges) + tentative):
             break
 
-        # Don't append a dead-end edge unless it's the very first step —
-        # doing so would make the route untextendable from the tail.
+        # Commit be3e31a behavior: do not append a dead-end edge to the tail
+        # of a random-walk route unless it is the very first step. A route whose
+        # tail is already unextendable causes unnecessary recovery calls and can
+        # make cars pause at the end of an edge while the script repairs it.
         if next_edge not in raw_graph and len(route) > 1:
             break
 
@@ -3509,9 +3511,9 @@ def extend_vehicle_route(
             # edges and strongly avoid the protected two-road loop.
             remaining = [current_edge]
 
-        # Trim remaining back to the last edge that has successors in raw_graph.
-        # This prevents dead-end edges at the tail of the route from causing
-        # unnecessary recovery calls.
+        # Commit be3e31a behavior: trim dead-end edges off the tail of the
+        # remaining route before extending it. This prevents a route from ending
+        # at an edge that cannot be extended and avoids repeated recovery calls.
         while len(remaining) > 1 and remaining[-1] not in raw_graph:
             remaining = remaining[:-1]
 
@@ -3519,7 +3521,7 @@ def extend_vehicle_route(
         previous_edge = remaining[-2] if len(remaining) >= 2 else None
 
         if last_edge not in raw_graph:
-            # Even current_edge has no successors — full recovery needed.
+            # Even current_edge has no successors, so full recovery is needed.
             recovered = recover_vehicle_route(
                 veh_id=veh_id,
                 current_edge=current_edge,
