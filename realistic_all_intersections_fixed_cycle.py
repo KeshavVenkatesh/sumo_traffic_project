@@ -201,6 +201,12 @@ KNOWN_UNCONNECTED_TRAP_LANES = {
 }
 
 LOOP_MEMORY_EDGES = 8
+
+# Ambulance settings
+AMBULANCE_SPAWN_INTERVAL = 120
+AMBULANCE_SPEED          = 16.0
+AMBULANCE_COLOR          = (255, 50, 50, 255)
+
 LOOP_RECENT_EDGE_PENALTY = 0.03
 LOOP_PROTECTED_TRANSITION_PENALTY = 0.001
 
@@ -1450,6 +1456,27 @@ def successor_weight(
 def write_empty_route_file(route_file):
     lines = []
     lines.append("<routes>")
+
+    lines.append(
+        '''    <vType id="ambulance"
+           vClass="emergency"
+           guiShape="emergency"
+           length="15.0"
+           width="5.0"
+           minGap="0.5"
+           accel="3.5"
+           decel="6.0"
+           emergencyDecel="9.0"
+           maxSpeed="22.2"
+           sigma="0.1"
+           tau="0.5"
+           color="255,0,0"
+           jmIgnoreFoeSpeed="100"
+           jmIgnoreFoeProb="1.0"
+           jmIgnoreKeepClearTime="-1"
+           jmDriveAfterYellowTime="100"
+           jmDriveAfterRedTime="100"/>'''
+    )
 
     lines.append(
         f'''    <vType id="global_car"
@@ -3759,6 +3786,130 @@ def print_turn_summary(turn_counts, title="Dynamic planned turn-decision summary
 # Simulation loop
 # ============================================================
 
+
+# ---------------------------------------------------------------------------
+# Ambulance management
+# ---------------------------------------------------------------------------
+
+def spawn_ambulance(sim_state, raw_graph, rng):
+    edge_list = [e for e in raw_graph if not e.startswith(":")]
+    if len(edge_list) < 2:
+        return None
+
+    # Cache edge positions in sim_state so we only do 1374 TraCI calls once
+    if "edge_positions" not in sim_state:
+        positions = {}
+        for edge_id in edge_list:
+            try:
+                pos = traci.lane.getShape(f"{edge_id}_0")
+                if pos:
+                    x = sum(p[0] for p in pos) / len(pos)
+                    y = sum(p[1] for p in pos) / len(pos)
+                    positions[edge_id] = (x, y)
+            except traci.TraCIException:
+                continue
+        sim_state["edge_positions"] = positions
+        print(f"  [ambulance] cached positions for {len(positions)} edges", flush=True)
+
+    edge_positions = sim_state["edge_positions"]
+    positioned_edges = [e for e in edge_list if e in edge_positions]
+    if len(positioned_edges) < 2:
+        return None
+
+    # Try to find an origin/dest pair that are far apart (>500m)
+    for attempt in range(100):
+        origin = rng.choice(positioned_edges)
+        dest   = rng.choice(positioned_edges)
+        if origin == dest:
+            continue
+
+        ox, oy = edge_positions[origin]
+        dx, dy = edge_positions[dest]
+        dist = ((ox - dx)**2 + (oy - dy)**2) ** 0.5
+
+        # Require at least 500m apart so route is long enough to see
+        if dist < 500:
+            continue
+
+        try:
+            path = traci.simulation.findRoute(origin, dest, vType="ambulance")
+            if not path or not path.edges or len(path.edges) < 5:
+                continue
+
+            amb_id   = f"ambulance_{sim_state['next_vehicle_id']}"
+            route_id = f"ambulance_route_{sim_state['next_route_id']}"
+            sim_state["next_vehicle_id"] += 1
+            sim_state["next_route_id"]   += 1
+
+            traci.route.add(route_id, list(path.edges))
+            traci.vehicle.add(
+                vehID=amb_id,
+                routeID=route_id,
+                typeID="ambulance",
+                depart=str(traci.simulation.getTime()),
+                departLane="best",
+                departPos="random_free",
+                departSpeed="0",
+            )
+            traci.vehicle.setColor(amb_id, AMBULANCE_COLOR)
+            # Limit speed so it's visible (~40 km/h)
+            traci.vehicle.setMaxSpeed(amb_id, 11.0)
+
+            # Add large blue POIs at origin and destination so they're
+            # visible even when zoomed all the way out
+            ox, oy = edge_positions[origin]
+            dx, dy = edge_positions[dest]
+            poi_a = f"{amb_id}_A"
+            poi_b = f"{amb_id}_B"
+            try:
+                traci.poi.add(poi_a, ox, oy, color=(0, 0, 255, 255),
+                              poiType="ambulance_origin", layer=10, imgWidth=80, imgHeight=80)
+                traci.poi.add(poi_b, dx, dy, color=(0, 200, 255, 255),
+                              poiType="ambulance_dest",   layer=10, imgWidth=80, imgHeight=80)
+            except traci.TraCIException:
+                pass
+
+            sim_state.setdefault("active_ambulances", {})[amb_id] = {
+                "origin": origin, "dest": dest,
+                "route_len": len(path.edges),
+                "poi_a": poi_a, "poi_b": poi_b,
+            }
+            return amb_id
+        except traci.TraCIException:
+            continue
+
+    return None
+
+
+def update_ambulances(sim_state, raw_graph, rng, sim_time, args):
+    active     = sim_state.setdefault("active_ambulances", {})
+    next_spawn = sim_state.setdefault("next_ambulance_spawn", 0.0)
+    if sim_time >= next_spawn:
+        amb_id = spawn_ambulance(sim_state, raw_graph, rng)
+        if amb_id:
+            info = active[amb_id]
+            print(f"  [ambulance] {amb_id}: {info['origin']} -> {info['dest']} ({info.get('route_len','?')} edges)", flush=True)
+        sim_state["next_ambulance_spawn"] = sim_time + args.ambulance_interval
+    current_ids = set(traci.vehicle.getIDList())
+    for amb_id in list(active.keys()):
+        if amb_id not in current_ids:
+            print(f"  [ambulance] {amb_id} arrived", flush=True)
+            info = active.pop(amb_id, {})
+            # Remove POIs
+            for poi_key in ("poi_a", "poi_b"):
+                poi_id = info.get(poi_key)
+                if poi_id:
+                    try:
+                        traci.poi.remove(poi_id)
+                    except traci.TraCIException:
+                        pass
+            continue
+        try:
+            traci.vehicle.getSpeed(amb_id)
+        except traci.TraCIException:
+            active.pop(amb_id, None)
+
+
 def run_simulation_steps(
     num_steps,
     controllers,
@@ -3893,6 +4044,8 @@ def run_simulation_steps(
         # they have enough downstream space to enter the junction. This applies
         # to both signalized and unsignalized intersections.
         apply_keep_clear_and_right_of_way_to_all_vehicles()
+
+        update_ambulances(sim_state, raw_graph, rng, traci.simulation.getTime(), args)
 
         traci.simulationStep()
         arrived += traci.simulation.getArrivedNumber()
@@ -4304,6 +4457,7 @@ def main():
     )
 
     parser.add_argument("--green-duration", type=float, default=30.0)
+    parser.add_argument("--ambulance-interval", type=float, default=float(AMBULANCE_SPAWN_INTERVAL), help="Seconds between ambulance spawns. Default 120.")
     parser.add_argument(
         "--max-consecutive-straight",
         type=int,
