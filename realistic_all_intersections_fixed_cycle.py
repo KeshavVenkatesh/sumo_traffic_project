@@ -1467,7 +1467,7 @@ def write_empty_route_file(route_file):
            accel="3.5"
            decel="6.0"
            emergencyDecel="9.0"
-           maxSpeed="22.2"
+           maxSpeed="8.0"
            sigma="0.1"
            tau="0.5"
            color="255,0,0"
@@ -3828,12 +3828,12 @@ def spawn_ambulance(sim_state, raw_graph, rng):
         dist = ((ox - dx)**2 + (oy - dy)**2) ** 0.5
 
         # Require at least 500m apart so route is long enough to see
-        if dist < 500:
+        if dist < 1500:
             continue
 
         try:
             path = traci.simulation.findRoute(origin, dest, vType="ambulance")
-            if not path or not path.edges or len(path.edges) < 5:
+            if not path or not path.edges or len(path.edges) < 20:
                 continue
 
             amb_id   = f"ambulance_{sim_state['next_vehicle_id']}"
@@ -3846,14 +3846,18 @@ def spawn_ambulance(sim_state, raw_graph, rng):
                 vehID=amb_id,
                 routeID=route_id,
                 typeID="ambulance",
-                depart=str(traci.simulation.getTime()),
-                departLane="best",
-                departPos="random_free",
+                depart="now",
+                departLane="first",
+                departPos="0",
                 departSpeed="0",
             )
             traci.vehicle.setColor(amb_id, AMBULANCE_COLOR)
-            # Limit speed so it's visible (~40 km/h)
-            traci.vehicle.setMaxSpeed(amb_id, 11.0)
+            traci.vehicle.setMaxSpeed(amb_id, 8.0)
+            # Force vehicle onto the lane immediately so it can't be teleported
+            try:
+                traci.vehicle.moveTo(amb_id, f"{path.edges[0]}_0", 5.0)
+            except traci.TraCIException:
+                pass
 
             # Add large blue POIs at origin and destination so they're
             # visible even when zoomed all the way out
@@ -3861,12 +3865,19 @@ def spawn_ambulance(sim_state, raw_graph, rng):
             dx, dy = edge_positions[dest]
             poi_a = f"{amb_id}_A"
             poi_b = f"{amb_id}_B"
+            # Draw large filled circles as polygons so they're visible when zoomed out
+            def make_circle_polygon(cx, cy, radius=60, points=12):
+                import math
+                return [(cx + radius * math.cos(2 * math.pi * i / points),
+                         cy + radius * math.sin(2 * math.pi * i / points))
+                        for i in range(points)]
+
             try:
-                traci.poi.add(poi_a, ox, oy, color=(0, 0, 255, 255),
-                              poiType="ambulance_origin", layer=10, imgWidth=80, imgHeight=80)
-                traci.poi.add(poi_b, dx, dy, color=(0, 200, 255, 255),
-                              poiType="ambulance_dest",   layer=10, imgWidth=80, imgHeight=80)
-            except traci.TraCIException:
+                traci.polygon.add(poi_a, make_circle_polygon(ox, oy),
+                                  color=(0, 0, 255, 255), fill=True, layer=10)
+                traci.polygon.add(poi_b, make_circle_polygon(dx, dy),
+                                  color=(0, 200, 255, 255), fill=True, layer=10)
+            except Exception:
                 pass
 
             sim_state.setdefault("active_ambulances", {})[amb_id] = {
@@ -3893,19 +3904,25 @@ def update_ambulances(sim_state, raw_graph, rng, sim_time, args):
     current_ids = set(traci.vehicle.getIDList())
     for amb_id in list(active.keys()):
         if amb_id not in current_ids:
-            print(f"  [ambulance] {amb_id} arrived", flush=True)
+            print(f"  [ambulance] {amb_id} arrived at destination", flush=True)
             info = active.pop(amb_id, {})
-            # Remove POIs
             for poi_key in ("poi_a", "poi_b"):
                 poi_id = info.get(poi_key)
                 if poi_id:
                     try:
-                        traci.poi.remove(poi_id)
-                    except traci.TraCIException:
+                        traci.polygon.remove(poi_id)
+                    except Exception:
                         pass
             continue
         try:
-            traci.vehicle.getSpeed(amb_id)
+            traci.vehicle.setMaxSpeed(amb_id, 8.0)
+            traci.vehicle.setParameter(amb_id, "time-to-teleport", "-1")
+            # Debug: print position every 10 steps
+            route      = traci.vehicle.getRoute(amb_id)
+            route_idx  = traci.vehicle.getRouteIndex(amb_id)
+            speed      = traci.vehicle.getSpeed(amb_id)
+            edge       = traci.vehicle.getRoadID(amb_id)
+            print(f"  [ambulance] {amb_id} edge={edge} idx={route_idx}/{len(route)} speed={speed:.1f}", flush=True)
         except traci.TraCIException:
             active.pop(amb_id, None)
 
@@ -3950,6 +3967,10 @@ def run_simulation_steps(
     prune_vehicle_edge_history(active_vehicle_ids)
 
     for veh_id in active_vehicle_ids:
+        # Ambulances manage their own fixed routes — skip all random-walk logic
+        if veh_id.startswith("ambulance_"):
+            continue
+
         try:
             current_lane_for_history = traci.vehicle.getLaneID(veh_id)
             current_edge_for_history = lane_to_edge(current_lane_for_history)
