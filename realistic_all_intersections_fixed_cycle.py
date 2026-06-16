@@ -3855,7 +3855,8 @@ def spawn_ambulance(sim_state, raw_graph, rng):
             traci.vehicle.setMaxSpeed(amb_id, 8.0)
             # Force vehicle onto the lane immediately so it can't be teleported
             try:
-                traci.vehicle.moveTo(amb_id, f"{path.edges[0]}_0", 5.0)
+                # Move ambulance to position 0 on the first lane of the origin edge
+                traci.vehicle.moveTo(amb_id, f"{path.edges[0]}_0", 0.0)
             except traci.TraCIException:
                 pass
 
@@ -3873,10 +3874,12 @@ def spawn_ambulance(sim_state, raw_graph, rng):
                         for i in range(points)]
 
             try:
+                # Green circle = Point A (origin/start)
                 traci.polygon.add(poi_a, make_circle_polygon(ox, oy),
-                                  color=(0, 0, 255, 255), fill=True, layer=10)
+                                  color=(0, 255, 0, 200), fill=True, layer=10)
+                # Red circle = Point B (destination/end)
                 traci.polygon.add(poi_b, make_circle_polygon(dx, dy),
-                                  color=(0, 200, 255, 255), fill=True, layer=10)
+                                  color=(255, 0, 0, 200), fill=True, layer=10)
             except Exception:
                 pass
 
