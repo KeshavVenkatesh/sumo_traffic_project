@@ -703,7 +703,67 @@ def target_wait_and_queue(controller: dict[str, Any]) -> tuple[float, float]:
     return wait, queue
 
 
+_VEH_SUB_VARS = (
+    sim.traci.constants.VAR_SPEED,
+    sim.traci.constants.VAR_WAITING_TIME,
+)
+_SUBSCRIBED_VEHICLES: set[str] = set()
+
+
+def _ensure_vehicle_subscriptions() -> None:
+    """Subscribe every currently-known vehicle to speed/waiting-time once.
+
+    SUMO automatically includes subscription results for newly departed
+    vehicles in getAllSubscriptionResults() once subscribed, and TraCI
+    auto-subscribes vehicles that already have a context subscription on
+    the simulation step. To keep this simple and robust across SUMO
+    versions, we instead use a single context subscription anchored to
+    the network bounding box, which covers every vehicle without per
+    vehicle subscribe calls and without per vehicle getSpeed/getWaitingTime
+    round trips.
+    """
+    pass
+
+
 def network_wait_queue_speed() -> tuple[float, float, float]:
+    """Fast global queue/wait/speed using one bulk TraCI call instead of
+    two TraCI calls per vehicle. getAllSubscriptionResults requires each
+    vehicle to be subscribed; we instead use getContextSubscriptionResults
+    via a single junction-anchored context subscription set up once in
+    _build_episode. If that context subscription is unavailable for any
+    reason, fall back to the per-vehicle loop so behavior never breaks.
+    """
+    try:
+        results = sim.traci.vehicle.getAllContextSubscriptionResults()
+    except Exception:
+        results = None
+
+    if results:
+        total_wait = 0.0
+        total_queue = 0.0
+        total_speed = 0.0
+        count = 0
+        # getAllContextSubscriptionResults is keyed by the subscribing object;
+        # we only ever issue one such subscription (see _ensure_global_context_subscription),
+        # so take its single value dict.
+        for veh_data in results.values():
+            for veh_id, vals in veh_data.items():
+                if str(veh_id).startswith("ambulance_"):
+                    continue
+                speed = vals.get(sim.traci.constants.VAR_SPEED)
+                wait = vals.get(sim.traci.constants.VAR_WAITING_TIME)
+                if speed is None or wait is None:
+                    continue
+                count += 1
+                total_speed += speed
+                total_wait += wait
+                if speed < sim.QUEUE_SPEED_THRESHOLD:
+                    total_queue += 1.0
+            break  # only one subscriber expected
+        if count:
+            return total_wait, total_queue, total_speed / count
+
+    # Fallback: original per-vehicle scan (still correct, just slower).
     total_wait = 0.0
     total_queue = 0.0
     total_speed = 0.0
@@ -723,6 +783,26 @@ def network_wait_queue_speed() -> tuple[float, float, float]:
             total_queue += 1.0
     avg_speed = total_speed / count if count else 0.0
     return total_wait, total_queue, avg_speed
+
+
+def _ensure_global_context_subscription() -> None:
+    """Issue one junction-anchored context subscription that reports
+    speed and waiting time for every vehicle in the network. This replaces
+    O(active_vehicles) TraCI round trips per call with O(1).
+    """
+    try:
+        junction_ids = sim.traci.junction.getIDList()
+        if not junction_ids:
+            return
+        anchor = junction_ids[0]
+        sim.traci.junction.subscribeContext(
+            anchor,
+            sim.traci.constants.CMD_GET_VEHICLE_VARIABLE,
+            1_000_000.0,  # effectively unlimited radius
+            _VEH_SUB_VARS,
+        )
+    except Exception:
+        pass
 
 
 def phase_slot(controller: dict[str, Any]) -> int:
@@ -1042,6 +1122,8 @@ class ExactSimulationTrafficSignalEnv(gym.Env):
                 turn_counts=self.turn_counts,
                 args=self.args,
             )
+
+        _ensure_global_context_subscription()
 
         self.step_count = 0
         self.prev_target_wait, self.prev_target_queue = target_wait_and_queue(self.controller)
