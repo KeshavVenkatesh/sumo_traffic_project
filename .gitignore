@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 large_region.net.xml
 large_region.net.xml
+.DS_Store
