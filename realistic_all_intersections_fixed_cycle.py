@@ -437,6 +437,11 @@ def route_enters_hardcoded_loop_region(route_edges, allowed_first_edge=None):
 
 
 def should_avoid_successor_for_loop(current_edge, next_edge, recent_edges=None):
+    """recent_edges may be any iterable. Callers that invoke this repeatedly
+    for many candidate edges against the *same* recent_edges should convert it
+    to a set once beforehand and pass that set in, to avoid rebuilding the
+    same set on every call (this function will reuse a set as-is without
+    copying)."""
     if not next_edge:
         return False
 
@@ -449,13 +454,16 @@ def should_avoid_successor_for_loop(current_edge, next_edge, recent_edges=None):
     ):
         return True
 
-    if recent_edges and next_edge in set(recent_edges):
-        return True
+    if recent_edges:
+        recent_set = recent_edges if isinstance(recent_edges, (set, frozenset)) else set(recent_edges)
+        if next_edge in recent_set:
+            return True
 
     return False
 
 
 def loop_avoidance_weight_multiplier(current_edge, next_edge, recent_edges=None):
+    """See should_avoid_successor_for_loop docstring re: recent_edges type."""
     multiplier = 1.0
 
     if next_edge in HARDCODED_NO_CRUISE_LOOP_EDGES:
@@ -467,8 +475,10 @@ def loop_avoidance_weight_multiplier(current_edge, next_edge, recent_edges=None)
     ):
         multiplier *= LOOP_PROTECTED_TRANSITION_PENALTY
 
-    if recent_edges and next_edge in set(recent_edges):
-        multiplier *= LOOP_RECENT_EDGE_PENALTY
+    if recent_edges:
+        recent_set = recent_edges if isinstance(recent_edges, (set, frozenset)) else set(recent_edges)
+        if next_edge in recent_set:
+            multiplier *= LOOP_RECENT_EDGE_PENALTY
 
     return multiplier
 
@@ -740,6 +750,11 @@ def planned_next_edge_from_route(veh_id, current_edge):
         return None
 
     if route[route_index] != current_edge:
+        # Fallback path only: SUMO's route_index didn't match current_edge
+        # (can happen briefly after a route rewrite). This is an O(n) scan
+        # over the vehicle's route, but it's unavoidable here since `route`
+        # is fetched fresh from TraCI each call and isn't a structure we can
+        # index into persistently. Should be rare in steady state.
         try:
             route_index = route.index(current_edge)
         except ValueError:
@@ -917,6 +932,7 @@ def force_route_to_reachable_lane_successor(
     if not outgoing_edges:
         return False
 
+    recent_edges_set = set(recent_edges or ())
     candidates = [edge for edge in outgoing_edges if edge != previous_edge] or outgoing_edges
     weights = [
         successor_weight(
@@ -926,7 +942,7 @@ def force_route_to_reachable_lane_successor(
             edge_metadata=edge_metadata,
             core_edges=core_edges,
             args=args,
-        ) * loop_avoidance_weight_multiplier(current_edge, edge, recent_edges)
+        ) * loop_avoidance_weight_multiplier(current_edge, edge, recent_edges_set)
         for edge in candidates
     ]
     next_edge = weighted_choice(rng, candidates, weights)
@@ -3277,25 +3293,10 @@ def choose_best_target_lane(candidate_lanes, current_lane_index):
 
 
 def planned_next_edge_for_vehicle(veh_id, current_edge):
-    try:
-        route = list(traci.vehicle.getRoute(veh_id))
-        route_index = traci.vehicle.getRouteIndex(veh_id)
-    except traci.TraCIException:
-        return None
-
-    if route_index < 0 or route_index >= len(route):
-        return None
-
-    if route[route_index] != current_edge:
-        try:
-            route_index = route.index(current_edge)
-        except ValueError:
-            return None
-
-    if route_index + 1 >= len(route):
-        return None
-
-    return route[route_index + 1]
+    # Identical logic to planned_next_edge_from_route — kept as a thin alias
+    # so both call sites share one implementation instead of two copies that
+    # could silently drift apart.
+    return planned_next_edge_from_route(veh_id, current_edge)
 
 
 def required_lane_change_distance(current_lane_index, target_lane_index):
@@ -3595,6 +3596,7 @@ def apply_approach_turn_decision_to_vehicle(
 
     weighted_options = []
     weights = []
+    recent_edges_set = set(recent_edges or ())
 
     for option in decision_options_by_group[movement]:
         outgoing_edge = option["outgoing_edge"]
@@ -3622,7 +3624,7 @@ def apply_approach_turn_decision_to_vehicle(
         weights.append(
             base
             * lane_weight
-            * loop_avoidance_weight_multiplier(current_edge, outgoing_edge, recent_edges)
+            * loop_avoidance_weight_multiplier(current_edge, outgoing_edge, recent_edges_set)
         )
 
     if not weighted_options:
@@ -4058,11 +4060,15 @@ def choose_uncontrolled_successor(
         return None
 
     recent_edges = tuple(recent_edges or ())
+    # Convert once; should_avoid_successor_for_loop / loop_avoidance_weight_multiplier
+    # are called once per candidate successor below, and would otherwise rebuild
+    # this same set on every single call.
+    recent_edges_set = set(recent_edges)
     non_backtrack_successors = [s for s in successors if s != previous_edge]
     preferred_successors = [
         s
         for s in non_backtrack_successors
-        if not should_avoid_successor_for_loop(current_edge, s, recent_edges)
+        if not should_avoid_successor_for_loop(current_edge, s, recent_edges_set)
     ]
 
     # Use loop-safe candidates when possible, but never strand the route if the
@@ -4087,15 +4093,14 @@ def choose_uncontrolled_successor(
 
     if available and turn_counts is not None:
         # Pick a movement group honouring TURN_PROBABILITIES.
-     
-            
+
         group = choose_turn_group(
             rng=rng,
             available_groups=available,
             turn_counts=turn_counts,
             strict_split=True,
         )
-        
+
         if group is not None:
             candidates = available[group]
             weights = [
@@ -4106,13 +4111,13 @@ def choose_uncontrolled_successor(
                     edge_metadata=edge_metadata,
                     core_edges=core_edges,
                     args=args,
-                ) * loop_avoidance_weight_multiplier(current_edge, s, recent_edges)
+                ) * loop_avoidance_weight_multiplier(current_edge, s, recent_edges_set)
                 for s in candidates
             ]
             chosen = weighted_choice(rng, candidates, weights)
             turn_counts[group] += 1
             return chosen
-    
+
     # Fallback: weight all successors (including unclassified) normally.
     candidates = list(successors)
     weights = [
@@ -4123,7 +4128,7 @@ def choose_uncontrolled_successor(
             edge_metadata=edge_metadata,
             core_edges=core_edges,
             args=args,
-        ) * loop_avoidance_weight_multiplier(current_edge, s, recent_edges)
+        ) * loop_avoidance_weight_multiplier(current_edge, s, recent_edges_set)
         for s in candidates
     ]
     return weighted_choice(rng, candidates, weights)
@@ -4142,6 +4147,10 @@ def choose_next_edge(
     recent_edges=None,
 ):
     recent_edges = tuple(recent_edges or ())
+    # Convert once here; this function calls loop-avoidance helpers across
+    # nested loops (per TLS group, then per candidate option) that would
+    # otherwise each rebuild this same set from the tuple repeatedly.
+    recent_edges_set = set(recent_edges)
 
     if current_edge in turn_index:
         tls_map = turn_index[current_edge]
@@ -4215,7 +4224,7 @@ def choose_next_edge(
                         edge_metadata=edge_metadata,
                         core_edges=core_edges,
                         args=args,
-                    ) * loop_avoidance_weight_multiplier(current_edge, outgoing_edge, recent_edges)
+                    ) * loop_avoidance_weight_multiplier(current_edge, outgoing_edge, recent_edges_set)
                 )
 
             if not weighted_options:
