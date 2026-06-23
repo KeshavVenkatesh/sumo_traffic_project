@@ -25,15 +25,61 @@ SUMO_TOOLS = os.path.join(os.environ["SUMO_HOME"], "tools")
 if os.path.isdir(SUMO_TOOLS) and SUMO_TOOLS not in sys.path:
     sys.path.insert(0, SUMO_TOOLS)
 
-for proj_candidate in (
-    "/opt/homebrew/share/proj",
-    "/usr/local/share/proj",
-    os.path.join(os.environ["SUMO_HOME"], "proj"),
-):
-    if os.path.exists(os.path.join(proj_candidate, "proj.db")):
-        os.environ.setdefault("PROJ_DATA", proj_candidate)
-        os.environ.setdefault("PROJ_LIB", proj_candidate)
-        break
+# SUMO on macOS may start but then immediately close the TraCI connection if
+# PROJ cannot find proj.db.  SUMO_HOME usually points at .../share/sumo, while
+# proj.db is usually one directory over in .../share/proj.  Do not rely on an
+# inherited empty/broken PROJ_DATA value; repair it before importing/running SUMO.
+SUMO_SHARE_DIR = os.path.dirname(os.environ["SUMO_HOME"])
+SUMO_ROOT_DIR = os.path.dirname(SUMO_SHARE_DIR)
+
+
+def _proj_dir_is_valid(path):
+    return bool(path) and os.path.exists(os.path.join(path, "proj.db"))
+
+
+def _repair_proj_environment():
+    current = os.environ.get("PROJ_DATA") or os.environ.get("PROJ_LIB")
+    if _proj_dir_is_valid(current):
+        os.environ["PROJ_DATA"] = current
+        os.environ["PROJ_LIB"] = current
+        return
+
+    candidates = (
+        os.path.join(SUMO_SHARE_DIR, "proj"),
+        os.path.join(SUMO_ROOT_DIR, "share", "proj"),
+        "/opt/homebrew/share/proj",
+        "/usr/local/share/proj",
+        os.path.join(os.environ["SUMO_HOME"], "proj"),
+    )
+
+    for proj_candidate in candidates:
+        if _proj_dir_is_valid(proj_candidate):
+            os.environ["PROJ_DATA"] = proj_candidate
+            os.environ["PROJ_LIB"] = proj_candidate
+            return
+
+
+def _repair_fontconfig_environment():
+    current = os.environ.get("FONTCONFIG_FILE")
+    if current and os.path.exists(current):
+        return
+
+    candidates = (
+        "/opt/X11/etc/fonts/fonts.conf",
+        "/opt/homebrew/etc/fonts/fonts.conf",
+        "/usr/local/etc/fonts/fonts.conf",
+        os.path.join(SUMO_ROOT_DIR, "etc", "fonts", "fonts.conf"),
+    )
+
+    for fontconfig_file in candidates:
+        if os.path.exists(fontconfig_file):
+            os.environ["FONTCONFIG_FILE"] = fontconfig_file
+            os.environ.setdefault("FONTCONFIG_PATH", os.path.dirname(fontconfig_file))
+            return
+
+
+_repair_proj_environment()
+_repair_fontconfig_environment()
 
 import traci
 
@@ -80,6 +126,21 @@ CAR_LENGTH = 4.8
 CAR_WIDTH = 1.8
 CAR_MIN_GAP = 2.5
 
+# Ambulance / emergency-vehicle helper.
+# Ambulances are allowed to proceed through red/yellow lights, but they should
+# still use SUMO's collision avoidance and this script's keep-clear checks.
+# Therefore, do not give them foe-ignore settings, do not forcibly move them
+# onto occupied lanes, and do not apply an artificial low max-speed cap.
+AMBULANCE_SPAWN_INTERVAL = 120.0
+AMBULANCE_COLOR = (255, 50, 50, 255)
+AMBULANCE_MIN_EUCLIDEAN_DISTANCE = 1500.0
+AMBULANCE_MIN_ROUTE_DISTANCE = 1800.0
+AMBULANCE_MIN_ROUTE_EDGES = 20
+AMBULANCE_ROUTE_ATTEMPTS = 100
+AMBULANCE_DEPART_LANE = "free"
+AMBULANCE_DEPART_POS = "random_free"
+AMBULANCE_POI_RADIUS = 250.0
+
 TURN_PROBABILITIES = {
     "S": 0.70,
     "R": 0.175,
@@ -119,13 +180,16 @@ LANE_BALANCE_MAX_LANE_DELTA = 1
 LANE_BALANCE_MIN_TIME_BETWEEN_CHANGES = 12.0
 LANE_BALANCE_LAST_CHANGE = {}
 
-# Traffic-light approach lane-change lock.
+# Intersection approach lane-change lock.
 # Vehicles may still prepare for turns upstream, but once they are this close
-# to a signalized stop line, neither this script nor SUMO's own lane-change
-# model is allowed to move them into another lane. This prevents the late
-# intersection-side lane changes that create blockages at traffic lights.
-TRAFFIC_LIGHT_NO_LANE_CHANGE_DISTANCE = 90.0
-TRAFFIC_LIGHT_LANE_PREP_DISTANCE = 280.0
+# to the end of any ordinary road segment, neither this script nor SUMO's own
+# lane-change model is allowed to move them into another lane. This prevents
+# last-second turn-lane changes right before intersections. Signalized
+# approaches are included and may use an equal-or-larger lock distance.
+INTERSECTION_NO_LANE_CHANGE_DISTANCE = 100.0
+INTERSECTION_LANE_PREP_DISTANCE = 320.0
+TRAFFIC_LIGHT_NO_LANE_CHANGE_DISTANCE = 100.0
+TRAFFIC_LIGHT_LANE_PREP_DISTANCE = 320.0
 TRAFFIC_LIGHT_LOCKED_LANE_CHANGE_MODE = 0
 TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE = 1621
 TRAFFIC_LIGHT_APPROACH_LANES = set()
@@ -197,6 +261,27 @@ KEEP_CLEAR_RELEASE_COOLDOWN = 10.0
 STUCK_RELEASE_WAIT_TIME = 12.0
 STUCK_RELEASE_SPEED = 0.05
 
+# Unjustified-stop watchdog.
+# A vehicle should not remain stopped in the middle of a normal road unless
+# there is a clear reason: a leader in front, an upcoming junction/traffic
+# light, a route/lane mismatch being repaired, or the end of its route. This
+# watchdog releases stale speed/lane-change overrides and repairs routes for
+# vehicles that are stopped on free road segments for no valid reason.
+UNJUSTIFIED_STOP_WATCHDOG_ENABLED = True
+UNJUSTIFIED_STOP_CHECK_INTERVAL = 1.0
+UNJUSTIFIED_STOP_SPEED = 0.20
+UNJUSTIFIED_STOP_MIN_TIME = 3.0
+UNJUSTIFIED_STOP_ACTION_COOLDOWN = 6.0
+UNJUSTIFIED_STOP_LEADER_DISTANCE = 24.0
+UNJUSTIFIED_STOP_JUNCTION_DISTANCE = 28.0
+UNJUSTIFIED_STOP_ROUTE_END_DISTANCE = 18.0
+UNJUSTIFIED_STOP_START_DISTANCE = 10.0
+UNJUSTIFIED_STOP_NUDGE_SPEED = 2.5
+UNJUSTIFIED_STOP_NUDGE_DURATION = 1.0
+UNJUSTIFIED_STOP_ROUTE_REPAIR_ATTEMPTS = 30
+UNJUSTIFIED_STOP_TRACKING = {}
+UNJUSTIFIED_STOP_LAST_ACTION = {}
+
 # Extra watchdog for lanes where the custom keep-clear logic previously
 # produced phantom stops. These constants must be defined before
 # is_phantom_stop_protected_location() is called.
@@ -257,12 +342,6 @@ KNOWN_UNCONNECTED_TRAP_LANES = {
 }
 
 LOOP_MEMORY_EDGES = 8
-
-# Ambulance settings
-AMBULANCE_SPAWN_INTERVAL = 120
-AMBULANCE_SPEED          = 16.0
-AMBULANCE_COLOR          = (255, 50, 50, 255)
-
 LOOP_RECENT_EDGE_PENALTY = 0.03
 LOOP_PROTECTED_TRANSITION_PENALTY = 0.001
 
@@ -357,6 +436,10 @@ def lane_to_edge(lane_id):
         return lane_id
 
     return lane_id.rsplit("_", 1)[0]
+
+
+def is_ambulance(veh_id):
+    return str(veh_id).startswith("ambulance_")
 
 
 def is_phantom_stop_protected_location(lane_id, edge_id=None):
@@ -590,15 +673,33 @@ def rebuild_traffic_light_approach_lanes(controllers):
     TRAFFIC_LIGHT_APPROACH_LANES = approach_lanes
 
     print()
-    print("Traffic-light lane-change lock:")
-    print(f"  no lane changes within: {TRAFFIC_LIGHT_NO_LANE_CHANGE_DISTANCE:.0f} m of a signalized stop line")
-    print(f"  approach lanes locked:  {len(TRAFFIC_LIGHT_APPROACH_LANES)}")
+    print("Intersection lane-change lock:")
+    print(f"  no lane changes within: {INTERSECTION_NO_LANE_CHANGE_DISTANCE:.0f} m of any intersection approach")
+    print(f"  signalized approaches use at least: {TRAFFIC_LIGHT_NO_LANE_CHANGE_DISTANCE:.0f} m")
+    print(f"  route/lane preparation begins up to: {TRAFFIC_LIGHT_LANE_PREP_DISTANCE:.0f} m upstream")
+    print(f"  signalized approach lanes cached:   {len(TRAFFIC_LIGHT_APPROACH_LANES)}")
 
 
 def traffic_light_no_lane_change_distance_for_lane(lane_id):
+    """Distance from lane end where lane changes are forbidden.
+
+    Despite the historical function name, this now applies to every normal
+    intersection approach. Traffic-light approaches are a subset and may use a
+    larger lock distance. Internal junction lanes are excluded.
+    """
+    if not lane_id or lane_id.startswith(":"):
+        return 0.0
+
+    edge_id = lane_to_edge(lane_id)
+    if edge_id is None or edge_id.startswith(":"):
+        return 0.0
+
+    distance = INTERSECTION_NO_LANE_CHANGE_DISTANCE
+
     if lane_id in TRAFFIC_LIGHT_APPROACH_LANES:
-        return TRAFFIC_LIGHT_NO_LANE_CHANGE_DISTANCE
-    return 0.0
+        distance = max(distance, TRAFFIC_LIGHT_NO_LANE_CHANGE_DISTANCE)
+
+    return max(0.0, distance)
 
 
 def inside_traffic_light_no_lane_change_zone(lane_id, distance_to_end=None):
@@ -620,7 +721,7 @@ def cleanup_traffic_light_lane_change_locks(active_ids):
 
 
 def apply_traffic_light_lane_change_lock_to_vehicle(veh_id):
-    """Disable autonomous lane changes close to signalized intersections.
+    """Disable autonomous lane changes close to intersections.
 
     This is separate from the script's explicit changeLane() guards. Without
     this, SUMO's internal lane-change model can still decide to merge at the
@@ -997,6 +1098,9 @@ def rescue_vehicle_from_unconnected_lane(
     args,
     recent_edges=None,
 ):
+    if is_ambulance(veh_id):
+        return False
+
     """Prevent vehicles from stopping at the end of a lane with no route link.
 
     This fixes the 417292872_0 problem generically. If a vehicle's current lane
@@ -1231,6 +1335,9 @@ def should_hold_for_keep_clear(veh_id):
 
 
 def release_if_unjustifiably_stuck(veh_id):
+    if is_ambulance(veh_id):
+        return False
+
     try:
         lane_id = traci.vehicle.getLaneID(veh_id)
         edge_id = lane_to_edge(lane_id)
@@ -1303,6 +1410,332 @@ def apply_keep_clear_and_right_of_way_to_all_vehicles():
             held_count += 1
 
     return held_count
+
+
+def cleanup_unjustified_stop_tracking(active_ids):
+    active_ids = set(active_ids)
+    for veh_id in list(UNJUSTIFIED_STOP_TRACKING):
+        if veh_id not in active_ids:
+            UNJUSTIFIED_STOP_TRACKING.pop(veh_id, None)
+    for veh_id in list(UNJUSTIFIED_STOP_LAST_ACTION):
+        if veh_id not in active_ids:
+            UNJUSTIFIED_STOP_LAST_ACTION.pop(veh_id, None)
+
+
+def vehicle_has_close_leader(veh_id, lookahead=UNJUSTIFIED_STOP_LEADER_DISTANCE):
+    try:
+        leader = traci.vehicle.getLeader(veh_id, lookahead)
+    except traci.TraCIException:
+        return False
+
+    if leader is None:
+        return False
+
+    try:
+        _leader_id, gap = leader
+        return gap <= lookahead
+    except Exception:
+        return True
+
+
+def vehicle_route_end_is_near(veh_id, current_edge, distance_to_end):
+    try:
+        route = list(traci.vehicle.getRoute(veh_id))
+        route_index = traci.vehicle.getRouteIndex(veh_id)
+    except traci.TraCIException:
+        return False
+
+    if route_index < 0 or route_index >= len(route):
+        return False
+
+    # If the current edge is the final route edge and the car is close to the
+    # end of it, stopping can be legitimate because the trip is ending.
+    if route_index == len(route) - 1 and route[route_index] == current_edge:
+        return distance_to_end <= UNJUSTIFIED_STOP_ROUTE_END_DISTANCE
+
+    return False
+
+
+def has_valid_reason_to_be_stopped(veh_id, lane_id, current_edge, lane_pos, distance_to_end):
+    if veh_id in KEEP_CLEAR_HELD_VEHICLES:
+        return True
+
+    if not lane_id or lane_id.startswith(":"):
+        return True
+
+    # Newly inserted vehicles can briefly be motionless while SUMO finds a free
+    # gap. Do not immediately kick them at the lane start.
+    if lane_pos <= UNJUSTIFIED_STOP_START_DISTANCE:
+        return True
+
+    # A car behind another car is allowed to stop. This covers normal queues,
+    # including long queues that extend far upstream from a red light.
+    if vehicle_has_close_leader(veh_id):
+        return True
+
+    # The first vehicle approaching a signalized stop line can legitimately
+    # stop inside the signal approach zone. For unsignalized junctions, use a
+    # smaller generic junction buffer.
+    if inside_traffic_light_no_lane_change_zone(lane_id, distance_to_end):
+        return True
+
+    if distance_to_end <= UNJUSTIFIED_STOP_JUNCTION_DISTANCE:
+        return True
+
+    if vehicle_route_end_is_near(veh_id, current_edge, distance_to_end):
+        return True
+
+    try:
+        if traci.vehicle.getStopState(veh_id) != 0:
+            return True
+    except traci.TraCIException:
+        pass
+
+    return False
+
+
+def build_od_recovery_route_from_current_edge(current_edge, sim_state, edge_metadata, rng, args):
+    context = sim_state.get("od_context")
+    if not context or current_edge not in context.get("all", []):
+        return None
+
+    destination_pool = context.get("boundary") or context.get("main_like") or context.get("all") or []
+    if not destination_pool:
+        return None
+
+    far_destinations = [
+        edge_id
+        for edge_id in destination_pool
+        if edge_id != current_edge
+        and edge_distance(current_edge, edge_id, edge_metadata) >= max(300.0, args.od_min_euclidean_distance * 0.5)
+    ]
+    if not far_destinations:
+        far_destinations = [edge_id for edge_id in context.get("all", []) if edge_id != current_edge]
+
+    for _ in range(UNJUSTIFIED_STOP_ROUTE_REPAIR_ATTEMPTS):
+        destination = weighted_edge_choice(rng, far_destinations, edge_metadata)
+        if destination is None:
+            return None
+
+        try:
+            path = fastest_sumo_route(current_edge, destination)
+        except traci.TraCIException:
+            continue
+
+        route_edges = list(getattr(path, "edges", []) or [])
+        if len(route_edges) < 2:
+            continue
+        if route_edges[0] != current_edge:
+            continue
+        if route_enters_hardcoded_loop_region(route_edges):
+            continue
+        if route_distance(route_edges, edge_metadata) < max(300.0, args.od_min_route_distance * 0.4):
+            continue
+
+        return route_edges
+
+    return None
+
+
+def repair_unjustified_stop_route(
+    veh_id,
+    lane_id,
+    current_edge,
+    raw_graph,
+    edge_metadata,
+    core_edges,
+    turn_index,
+    rng,
+    turn_counts,
+    sim_state,
+    args,
+):
+    next_edge = planned_next_edge_from_route(veh_id, current_edge)
+
+    # First fix the common concrete cause: this exact lane cannot reach the
+    # vehicle's next routed edge. This is the same type of failure as the known
+    # 417292872_0 trap, but handled generically.
+    if next_edge is not None and not next_edge.startswith(":"):
+        if not lane_has_connection_to_edge(lane_id, next_edge):
+            if rescue_vehicle_from_unconnected_lane(
+                veh_id=veh_id,
+                raw_graph=raw_graph,
+                edge_metadata=edge_metadata,
+                core_edges=core_edges,
+                turn_index=turn_index,
+                rng=rng,
+                turn_counts=turn_counts,
+                args=args,
+                recent_edges=vehicle_recent_edges(veh_id),
+            ):
+                return True
+
+    # If the route has effectively ended in the middle of the map, give this
+    # vehicle a new fastest OD route from its current edge. This keeps OD mode
+    # realistic while avoiding mid-road dead ends.
+    if use_od_routing(args):
+        route_edges = build_od_recovery_route_from_current_edge(
+            current_edge=current_edge,
+            sim_state=sim_state,
+            edge_metadata=edge_metadata,
+            rng=rng,
+            args=args,
+        )
+        if route_edges:
+            try:
+                traci.vehicle.setRoute(veh_id, route_edges)
+                return True
+            except traci.TraCIException:
+                pass
+
+    # Last resort: use the existing recovery helper. This is only used for
+    # abnormal stopped vehicles, not normal OD trip generation.
+    return recover_vehicle_route(
+        veh_id=veh_id,
+        current_edge=current_edge,
+        raw_graph=raw_graph,
+        edge_metadata=edge_metadata,
+        core_edges=core_edges,
+        turn_index=turn_index,
+        rng=rng,
+        turn_counts=turn_counts,
+        args=args,
+        recent_edges=vehicle_recent_edges(veh_id),
+    )
+
+
+def nudge_unjustifiably_stopped_vehicle(veh_id):
+    try:
+        max_speed = traci.vehicle.getMaxSpeed(veh_id)
+        target_speed = min(max_speed, UNJUSTIFIED_STOP_NUDGE_SPEED)
+        if target_speed <= 0:
+            target_speed = UNJUSTIFIED_STOP_NUDGE_SPEED
+        traci.vehicle.slowDown(veh_id, target_speed, UNJUSTIFIED_STOP_NUDGE_DURATION)
+        return True
+    except (traci.TraCIException, AttributeError):
+        # Fall back to clearing any forced stop/speed override. Avoid a
+        # persistent positive setSpeed() command because that can be unsafe.
+        return safe_vehicle_set_speed(veh_id, -1)
+
+
+def apply_unjustified_stop_watchdog_to_vehicle(
+    veh_id,
+    raw_graph,
+    edge_metadata,
+    core_edges,
+    turn_index,
+    rng,
+    turn_counts,
+    sim_state,
+    args,
+):
+    if is_ambulance(veh_id):
+        return False
+
+    if not getattr(args, "unjustified_stop_watchdog", UNJUSTIFIED_STOP_WATCHDOG_ENABLED):
+        return False
+
+    now = current_sim_time()
+
+    try:
+        lane_id = traci.vehicle.getLaneID(veh_id)
+        if not lane_id or lane_id.startswith(":"):
+            UNJUSTIFIED_STOP_TRACKING.pop(veh_id, None)
+            return False
+
+        current_edge = lane_to_edge(lane_id)
+        lane_pos = traci.vehicle.getLanePosition(veh_id)
+        lane_len = cached_lane_length(lane_id)
+        speed = traci.vehicle.getSpeed(veh_id)
+    except traci.TraCIException:
+        UNJUSTIFIED_STOP_TRACKING.pop(veh_id, None)
+        return False
+
+    if current_edge is None or lane_len <= 0.0:
+        UNJUSTIFIED_STOP_TRACKING.pop(veh_id, None)
+        return False
+
+    distance_to_end = lane_len - lane_pos
+
+    stop_speed = getattr(args, "unjustified_stop_speed", UNJUSTIFIED_STOP_SPEED)
+    min_time = getattr(args, "unjustified_stop_min_time", UNJUSTIFIED_STOP_MIN_TIME)
+
+    if speed > stop_speed:
+        UNJUSTIFIED_STOP_TRACKING.pop(veh_id, None)
+        return False
+
+    if has_valid_reason_to_be_stopped(veh_id, lane_id, current_edge, lane_pos, distance_to_end):
+        UNJUSTIFIED_STOP_TRACKING.pop(veh_id, None)
+        return False
+
+    first_seen = UNJUSTIFIED_STOP_TRACKING.setdefault(veh_id, now)
+    if now - first_seen < min_time:
+        return False
+
+    if now - UNJUSTIFIED_STOP_LAST_ACTION.get(veh_id, -1e9) < UNJUSTIFIED_STOP_ACTION_COOLDOWN:
+        return False
+
+    # Clear anything that our script may have done first: stale keep-clear
+    # speed holds, old lane-change locks, or a previous forced speed.
+    release_keep_clear_vehicle(veh_id)
+    try:
+        if not inside_traffic_light_no_lane_change_zone(lane_id, distance_to_end):
+            traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE)
+            TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES.discard(veh_id)
+    except traci.TraCIException:
+        pass
+
+    repaired = repair_unjustified_stop_route(
+        veh_id=veh_id,
+        lane_id=lane_id,
+        current_edge=current_edge,
+        raw_graph=raw_graph,
+        edge_metadata=edge_metadata,
+        core_edges=core_edges,
+        turn_index=turn_index,
+        rng=rng,
+        turn_counts=turn_counts,
+        sim_state=sim_state,
+        args=args,
+    )
+
+    if not repaired:
+        nudge_unjustifiably_stopped_vehicle(veh_id)
+
+    UNJUSTIFIED_STOP_LAST_ACTION[veh_id] = now
+    UNJUSTIFIED_STOP_TRACKING.pop(veh_id, None)
+    return True
+
+
+def apply_unjustified_stop_watchdog_to_all_vehicles(
+    raw_graph,
+    edge_metadata,
+    core_edges,
+    turn_index,
+    rng,
+    turn_counts,
+    sim_state,
+    args,
+):
+    active_ids = list(traci.vehicle.getIDList())
+    cleanup_unjustified_stop_tracking(active_ids)
+
+    fixed = 0
+    for veh_id in active_ids:
+        if apply_unjustified_stop_watchdog_to_vehicle(
+            veh_id=veh_id,
+            raw_graph=raw_graph,
+            edge_metadata=edge_metadata,
+            core_edges=core_edges,
+            turn_index=turn_index,
+            rng=rng,
+            turn_counts=turn_counts,
+            sim_state=sim_state,
+            args=args,
+        ):
+            fixed += 1
+
+    return fixed
 
 
 def weighted_choice(rng, items, weights):
@@ -2101,18 +2534,26 @@ def write_empty_route_file(route_file):
         '''    <vType id="ambulance"
            vClass="emergency"
            guiShape="emergency"
-           length="15.0"
-           width="5.0"
-           minGap="0.5"
+           length="7.0"
+           width="2.4"
+           minGap="1.0"
            accel="3.5"
            decel="6.0"
            emergencyDecel="9.0"
-           maxSpeed="8.0"
-           sigma="0.1"
-           tau="0.5"
-           color="255,0,0"
-           jmIgnoreFoeSpeed="100"
-           jmIgnoreFoeProb="1.0"
+           sigma="0.2"
+           tau="0.6"
+           color="255,50,50"
+           speedFactor="1.35"
+           lcStrategic="100.0"
+           lcCooperative="1.0"
+           lcSpeedGain="0.10"
+           lcKeepRight="0.0"
+           lcAssertive="0.60"
+           jmIgnoreFoeProb="0.0"
+           jmIgnoreJunctionFoeProb="0.0"
+           jmTimegapMinor="1.0"
+           jmAdvance="0"
+           jmExtraGap="2.5"
            jmIgnoreKeepClearTime="-1"
            jmDriveAfterYellowTime="100"
            jmDriveAfterRedTime="100"/>'''
@@ -3681,6 +4122,9 @@ def prune_approach_turn_decisions(active_ids):
 
 
 def apply_turn_lane_preference_to_vehicle(veh_id):
+    if is_ambulance(veh_id):
+        return False
+
     """
     Nudge vehicles into better approach lanes without changing routes/signals.
 
@@ -3874,6 +4318,9 @@ def choose_lane_balance_target(current_lane, candidate_lanes):
 
 def apply_lane_balancing_to_vehicle(veh_id):
     """Gently spread cruising traffic across usable lanes on multi-lane roads."""
+    if is_ambulance(veh_id):
+        return False
+
     now = current_sim_time()
 
     if now - LANE_BALANCE_LAST_CHANGE.get(veh_id, -1e9) < LANE_BALANCE_MIN_TIME_BETWEEN_CHANGES:
@@ -4714,133 +5161,193 @@ def print_turn_summary(turn_counts, title="Dynamic planned turn-decision summary
     print("=" * 76)
 
 
-# ============================================================
-# Simulation loop
-# ============================================================
 
-
-# ---------------------------------------------------------------------------
+# ============================================================
 # Ambulance management
-# ---------------------------------------------------------------------------
+# ============================================================
 
-def spawn_ambulance(sim_state, raw_graph, rng):
-    edge_list = [e for e in raw_graph if not e.startswith(":")]
-    if len(edge_list) < 2:
-        return None
+def ambulance_route(origin_edge, destination_edge):
+    try:
+        return traci.simulation.findRoute(
+            origin_edge,
+            destination_edge,
+            "ambulance",
+            current_sim_time(),
+        )
+    except TypeError:
+        try:
+            return traci.simulation.findRoute(origin_edge, destination_edge, "ambulance")
+        except TypeError:
+            return traci.simulation.findRoute(origin_edge, destination_edge)
 
-    # Cache edge positions in sim_state so we only do 1374 TraCI calls once
-    if "edge_positions" not in sim_state:
-        positions = {}
-        for edge_id in edge_list:
-            try:
-                pos = traci.lane.getShape(f"{edge_id}_0")
-                if pos:
-                    x = sum(p[0] for p in pos) / len(pos)
-                    y = sum(p[1] for p in pos) / len(pos)
-                    positions[edge_id] = (x, y)
-            except traci.TraCIException:
-                continue
-        sim_state["edge_positions"] = positions
-        print(f"  [ambulance] cached positions for {len(positions)} edges", flush=True)
 
-    edge_positions = sim_state["edge_positions"]
-    positioned_edges = [e for e in edge_list if e in edge_positions]
-    if len(positioned_edges) < 2:
-        return None
+def make_circle_polygon(cx, cy, radius, points=24):
+    return [
+        (
+            cx + radius * math.cos(2 * math.pi * i / points),
+            cy + radius * math.sin(2 * math.pi * i / points),
+        )
+        for i in range(points)
+    ]
 
-    # Try to find an origin/dest pair that are far apart (>500m)
-    for attempt in range(100):
-        origin = rng.choice(positioned_edges)
-        dest   = rng.choice(positioned_edges)
-        if origin == dest:
+
+def choose_ambulance_origin_destination(raw_graph, edge_metadata, rng, args):
+    candidates = [
+        edge_id
+        for edge_id in raw_graph
+        if edge_id and not edge_id.startswith(":") and edge_length(edge_id, edge_metadata) >= OD_MIN_EDGE_LENGTH
+    ]
+
+    if len(candidates) < 2:
+        return None, None
+
+    weights = [max(0.001, edge_base_weight(edge_id, edge_metadata)) for edge_id in candidates]
+
+    for _ in range(max(1, int(args.ambulance_route_attempts))):
+        origin = weighted_choice(rng, candidates, weights)
+        destination = weighted_choice(rng, candidates, weights)
+
+        if origin == destination:
             continue
 
-        ox, oy = edge_positions[origin]
-        dx, dy = edge_positions[dest]
-        dist = ((ox - dx)**2 + (oy - dy)**2) ** 0.5
-
-        # Require at least 500m apart so route is long enough to see
-        if dist < 1500:
+        if edge_distance(origin, destination, edge_metadata) < args.ambulance_min_euclidean_distance:
             continue
+
+        return origin, destination
+
+    return None, None
+
+
+def spawn_ambulance(sim_state, raw_graph, edge_metadata, rng, args):
+    if getattr(args, "disable_ambulances", False):
+        return None
+
+    for _ in range(max(1, int(args.ambulance_route_attempts))):
+        origin, destination = choose_ambulance_origin_destination(
+            raw_graph=raw_graph,
+            edge_metadata=edge_metadata,
+            rng=rng,
+            args=args,
+        )
+
+        if origin is None or destination is None:
+            return None
 
         try:
-            path = traci.simulation.findRoute(origin, dest, vType="ambulance")
-            if not path or not path.edges or len(path.edges) < 20:
-                continue
+            path = ambulance_route(origin, destination)
+        except traci.TraCIException:
+            continue
 
-            amb_id   = f"ambulance_{sim_state['next_vehicle_id']}"
-            route_id = f"ambulance_route_{sim_state['next_route_id']}"
-            sim_state["next_vehicle_id"] += 1
-            sim_state["next_route_id"]   += 1
+        route_edges = list(getattr(path, "edges", []) or [])
+        if len(route_edges) < args.ambulance_min_route_edges:
+            continue
+        if route_edges[0] != origin or route_edges[-1] != destination:
+            continue
+        if route_distance(route_edges, edge_metadata) < args.ambulance_min_route_distance:
+            continue
+        if route_enters_hardcoded_loop_region(route_edges):
+            continue
 
-            traci.route.add(route_id, list(path.edges))
+        amb_id = f"ambulance_{sim_state['next_vehicle_id']}"
+        route_id = f"ambulance_route_{sim_state['next_route_id']}"
+        sim_state["next_vehicle_id"] += 1
+        sim_state["next_route_id"] += 1
+
+        try:
+            traci.route.add(route_id, route_edges)
             traci.vehicle.add(
                 vehID=amb_id,
                 routeID=route_id,
                 typeID="ambulance",
-                depart="now",
-                departLane="first",
-                departPos="0",
-                departSpeed="0",
+                depart=str(current_sim_time()),
+                departLane=args.ambulance_depart_lane,
+                departPos=args.ambulance_depart_pos,
+                departSpeed="max",
             )
             traci.vehicle.setColor(amb_id, AMBULANCE_COLOR)
-            traci.vehicle.setMaxSpeed(amb_id, 8.0)
-            # Force vehicle onto the lane immediately so it can't be teleported
+
+            # Important: do not call moveTo() here. moveTo() can forcibly place
+            # the ambulance onto an occupied lane, which looks like phasing
+            # through normal cars. Let SUMO perform a normal safe departure.
+            # Also do not call setMaxSpeed(); the vType has no artificial low
+            # maxSpeed cap, while normal car-following and lane constraints still
+            # prevent impossible overlap with other vehicles.
             try:
-                # Move ambulance to position 0 on the first lane of the origin edge
-                traci.vehicle.moveTo(amb_id, f"{path.edges[0]}_0", 0.0)
+                traci.vehicle.setParameter(amb_id, "time-to-teleport", "-1")
             except traci.TraCIException:
                 pass
 
-            # Add large blue POIs at origin and destination so they're
-            # visible even when zoomed all the way out
-            ox, oy = edge_positions[origin]
-            dx, dy = edge_positions[dest]
+            ox, oy = edge_xy(origin, edge_metadata)
+            dx, dy = edge_xy(destination, edge_metadata)
             poi_a = f"{amb_id}_A"
             poi_b = f"{amb_id}_B"
-            # Draw large filled circles as polygons so they're visible when zoomed out
-            def make_circle_polygon(cx, cy, radius=60, points=12):
-                import math
-                return [(cx + radius * math.cos(2 * math.pi * i / points),
-                         cy + radius * math.sin(2 * math.pi * i / points))
-                        for i in range(points)]
 
             try:
-                # Green circle = Point A (origin/start)
-                traci.polygon.add(poi_a, make_circle_polygon(ox, oy),
-                                  color=(0, 255, 0, 200), fill=True, layer=10)
-                # Red circle = Point B (destination/end)
-                traci.polygon.add(poi_b, make_circle_polygon(dx, dy),
-                                  color=(255, 0, 0, 200), fill=True, layer=10)
+                traci.polygon.add(
+                    poi_a,
+                    make_circle_polygon(ox, oy, args.ambulance_poi_radius),
+                    color=(0, 255, 0, 230),
+                    fill=True,
+                    layer=100,
+                )
+                traci.polygon.add(
+                    poi_b,
+                    make_circle_polygon(dx, dy, args.ambulance_poi_radius),
+                    color=(255, 0, 0, 230),
+                    fill=True,
+                    layer=100,
+                )
             except Exception:
-                pass
+                poi_a = None
+                poi_b = None
 
             sim_state.setdefault("active_ambulances", {})[amb_id] = {
-                "origin": origin, "dest": dest,
-                "route_len": len(path.edges),
-                "poi_a": poi_a, "poi_b": poi_b,
+                "origin": origin,
+                "destination": destination,
+                "route_len": len(route_edges),
+                "route_distance": route_distance(route_edges, edge_metadata),
+                "poi_a": poi_a,
+                "poi_b": poi_b,
             }
             return amb_id
+
         except traci.TraCIException:
             continue
 
     return None
 
 
-def update_ambulances(sim_state, raw_graph, rng, sim_time, args):
-    active     = sim_state.setdefault("active_ambulances", {})
+def update_ambulances(sim_state, raw_graph, edge_metadata, rng, sim_time, args):
+    active = sim_state.setdefault("active_ambulances", {})
+
+    if getattr(args, "disable_ambulances", False):
+        return 0
+
+    spawned = 0
     next_spawn = sim_state.setdefault("next_ambulance_spawn", 0.0)
-    if sim_time >= next_spawn:
-        amb_id = spawn_ambulance(sim_state, raw_graph, rng)
+    if args.ambulance_interval > 0.0 and sim_time >= next_spawn:
+        amb_id = spawn_ambulance(
+            sim_state=sim_state,
+            raw_graph=raw_graph,
+            edge_metadata=edge_metadata,
+            rng=rng,
+            args=args,
+        )
         if amb_id:
+            spawned += 1
             info = active[amb_id]
-            print(f"  [ambulance] {amb_id}: {info['origin']} -> {info['dest']} ({info.get('route_len','?')} edges)", flush=True)
+            print(
+                f"  [ambulance] {amb_id}: {info['origin']} -> {info['destination']} "
+                f"({info.get('route_len', '?')} edges, {info.get('route_distance', 0.0):.0f} m)",
+                flush=True,
+            )
         sim_state["next_ambulance_spawn"] = sim_time + args.ambulance_interval
+
     current_ids = set(traci.vehicle.getIDList())
     for amb_id in list(active.keys()):
         if amb_id not in current_ids:
-            print(f"  [ambulance] {amb_id} arrived at destination", flush=True)
             info = active.pop(amb_id, {})
+            print(f"  [ambulance] {amb_id} arrived or left the simulation", flush=True)
             for poi_key in ("poi_a", "poi_b"):
                 poi_id = info.get(poi_key)
                 if poi_id:
@@ -4849,18 +5356,31 @@ def update_ambulances(sim_state, raw_graph, rng, sim_time, args):
                     except Exception:
                         pass
             continue
+
         try:
-            traci.vehicle.setMaxSpeed(amb_id, 8.0)
+            # Do not setMaxSpeed() and do not setSpeed() here. Repeated speed
+            # overrides can defeat the keep-clear gate. The ambulance may pass
+            # red lights through the vType junction parameters, but it still
+            # must obey car-following and downstream-space checks.
             traci.vehicle.setParameter(amb_id, "time-to-teleport", "-1")
-            # Debug: print position every 10 steps
-            route      = traci.vehicle.getRoute(amb_id)
-            route_idx  = traci.vehicle.getRouteIndex(amb_id)
-            speed      = traci.vehicle.getSpeed(amb_id)
-            edge       = traci.vehicle.getRoadID(amb_id)
-            print(f"  [ambulance] {amb_id} edge={edge} idx={route_idx}/{len(route)} speed={speed:.1f}", flush=True)
+
+            if getattr(args, "ambulance_debug", False):
+                route = traci.vehicle.getRoute(amb_id)
+                route_idx = traci.vehicle.getRouteIndex(amb_id)
+                speed = traci.vehicle.getSpeed(amb_id)
+                edge = traci.vehicle.getRoadID(amb_id)
+                print(
+                    f"  [ambulance] {amb_id} edge={edge} idx={route_idx}/{len(route)} speed={speed:.1f}",
+                    flush=True,
+                )
         except traci.TraCIException:
             active.pop(amb_id, None)
 
+    return spawned
+
+# ============================================================
+# Simulation loop
+# ============================================================
 
 def run_simulation_steps(
     num_steps,
@@ -4903,8 +5423,9 @@ def run_simulation_steps(
     apply_traffic_light_lane_change_lock_to_all_vehicles()
 
     for veh_id in active_vehicle_ids:
-        # Ambulances manage their own fixed routes — skip all random-walk logic
-        if veh_id.startswith("ambulance_"):
+        # Ambulances keep their own emergency OD routes. Do not rewrite their
+        # routes or force lane changes with the normal passenger-car helpers.
+        if is_ambulance(veh_id):
             continue
 
         try:
@@ -5009,13 +5530,42 @@ def run_simulation_steps(
             apply_lane_balancing_to_all_vehicles()
             sim_state["next_lane_balance_time"] = sim_time + LANE_BALANCE_INTERVAL
 
+        # Spawn and track emergency vehicles before the keep-clear gate runs,
+        # so a newly spawned ambulance is still checked for downstream space
+        # before the next simulation step.
+        update_ambulances(
+            sim_state=sim_state,
+            raw_graph=raw_graph,
+            edge_metadata=edge_metadata,
+            rng=rng,
+            sim_time=sim_time,
+            args=args,
+        )
+
         # Vehicle-level keep-clear / right-of-way gate.
         # Lights stay green according to the fixed cycle; cars decide whether
         # they have enough downstream space to enter the junction. This applies
         # to both signalized and unsignalized intersections.
         apply_keep_clear_and_right_of_way_to_all_vehicles()
 
-        update_ambulances(sim_state, raw_graph, rng, traci.simulation.getTime(), args)
+        # Strong anti-phantom-stop watchdog. A car is allowed to stop only when
+        # it has a leader ahead, is legitimately at an intersection/traffic
+        # light, is at the end of its route, or is being actively rescued.
+        # Otherwise, stale speed holds and route/lane problems are repaired.
+        if sim_time >= sim_state.get("next_unjustified_stop_check_time", 0.0):
+            apply_unjustified_stop_watchdog_to_all_vehicles(
+                raw_graph=raw_graph,
+                edge_metadata=edge_metadata,
+                core_edges=core_edges,
+                turn_index=turn_index,
+                rng=rng,
+                turn_counts=turn_counts,
+                sim_state=sim_state,
+                args=args,
+            )
+            sim_state["next_unjustified_stop_check_time"] = sim_time + getattr(
+                args, "unjustified_stop_check_interval", UNJUSTIFIED_STOP_CHECK_INTERVAL
+            )
 
         traci.simulationStep()
         arrived += traci.simulation.getArrivedNumber()
@@ -5147,7 +5697,10 @@ def run_simulation(args):
             "next_od_origin_zone_index": 0,
             "next_lane_pref_time": 0.0,
             "next_lane_balance_time": 0.0,
+            "next_unjustified_stop_check_time": 0.0,
             "next_unconnected_lane_rescue_time": 0.0,
+            "next_ambulance_spawn": 0.0,
+            "active_ambulances": {},
             "od_context": od_context,
             "od_trip_counts": Counter(),
             "od_movement_counts": Counter(),
@@ -5197,6 +5750,15 @@ def run_simulation(args):
             print("  Decisions are made near each intersection when a safe lane change is still possible.")
             print("  Straight vehicles prefer straight-only/no-right lanes and avoid the rightmost lane when possible.")
         print()
+        if args.disable_ambulances:
+            print("Ambulance model: disabled")
+        else:
+            print("Ambulance model:")
+            print(f"  spawn interval: {args.ambulance_interval:.1f} s")
+            print("  no artificial low max-speed cap is applied by this script")
+            print("  ambulances may proceed through red/yellow lights when safe")
+            print("  collision/foe ignoring is disabled; no forced moveTo() placement is used")
+        print()
         print("Straight-movement fix:")
         print("  Uses SUMO lane-link directions when available.")
         print("  Turn options are built from the full drivable graph, not only the loop-safe core.")
@@ -5208,6 +5770,7 @@ def run_simulation(args):
         print("  Cars are recovered to the full drivable graph, not one small core.")
         print("  The observed two-road local loop is hard-blocked from normal random routing.")
         print("  Unconnected-lane rescue prevents lane-end stops such as 417292872_0.")
+        print("  No lane changes are allowed in the last 100 m before an intersection by default.")
         print("  Signal phases have randomized offsets and slight timing variation.")
         print("  Routes are planned far ahead to reduce last-second lane changes.")
         print("  Per-vehicle route memory prevents repeated cycle-like paths.")
@@ -5502,6 +6065,20 @@ def main():
         help="Distance before a traffic light where route/lane decisions start being made earlier.",
     )
 
+    parser.add_argument(
+        "--intersection-no-lane-change-distance",
+        type=float,
+        default=INTERSECTION_NO_LANE_CHANGE_DISTANCE,
+        help="Distance before any intersection where lane changes are completely disabled.",
+    )
+
+    parser.add_argument(
+        "--intersection-lane-prep-distance",
+        type=float,
+        default=INTERSECTION_LANE_PREP_DISTANCE,
+        help="Distance before any intersection where vehicles should already begin preparing for the correct turn lane.",
+    )
+
     parser.add_argument("--max-depart-delay", type=int, default=300)
 
     parser.add_argument(
@@ -5511,8 +6088,43 @@ def main():
         help="Last-resort gridlock breaker. Use -1 to disable teleporting entirely.",
     )
 
+    parser.add_argument(
+        "--disable-unjustified-stop-watchdog",
+        dest="unjustified_stop_watchdog",
+        action="store_false",
+        help="Disable the watchdog that repairs cars stopped in the middle of roads for no valid reason.",
+    )
+    parser.set_defaults(unjustified_stop_watchdog=UNJUSTIFIED_STOP_WATCHDOG_ENABLED)
+    parser.add_argument(
+        "--unjustified-stop-check-interval",
+        type=float,
+        default=UNJUSTIFIED_STOP_CHECK_INTERVAL,
+        help="Seconds between scans for cars stopped on free road segments.",
+    )
+    parser.add_argument(
+        "--unjustified-stop-speed",
+        type=float,
+        default=UNJUSTIFIED_STOP_SPEED,
+        help="Speed below which a car is considered stopped/near-stopped by the watchdog.",
+    )
+    parser.add_argument(
+        "--unjustified-stop-min-time",
+        type=float,
+        default=UNJUSTIFIED_STOP_MIN_TIME,
+        help="How long a car may remain stopped without a valid reason before repair is attempted.",
+    )
+
     parser.add_argument("--green-duration", type=float, default=30.0)
-    parser.add_argument("--ambulance-interval", type=float, default=float(AMBULANCE_SPAWN_INTERVAL), help="Seconds between ambulance spawns. Default 120.")
+    parser.add_argument("--ambulance-interval", type=float, default=AMBULANCE_SPAWN_INTERVAL)
+    parser.add_argument("--disable-ambulances", action="store_true")
+    parser.add_argument("--ambulance-min-euclidean-distance", type=float, default=AMBULANCE_MIN_EUCLIDEAN_DISTANCE)
+    parser.add_argument("--ambulance-min-route-distance", type=float, default=AMBULANCE_MIN_ROUTE_DISTANCE)
+    parser.add_argument("--ambulance-min-route-edges", type=int, default=AMBULANCE_MIN_ROUTE_EDGES)
+    parser.add_argument("--ambulance-route-attempts", type=int, default=AMBULANCE_ROUTE_ATTEMPTS)
+    parser.add_argument("--ambulance-depart-lane", default=AMBULANCE_DEPART_LANE)
+    parser.add_argument("--ambulance-depart-pos", default=AMBULANCE_DEPART_POS)
+    parser.add_argument("--ambulance-poi-radius", type=float, default=AMBULANCE_POI_RADIUS)
+    parser.add_argument("--ambulance-debug", action="store_true")
     parser.add_argument(
         "--max-consecutive-straight",
         type=int,
@@ -5536,9 +6148,21 @@ def main():
 
     args = parser.parse_args()
 
-    globals()["TRAFFIC_LIGHT_NO_LANE_CHANGE_DISTANCE"] = max(0.0, float(args.tls_no_lane_change_distance))
+    globals()["INTERSECTION_NO_LANE_CHANGE_DISTANCE"] = max(
+        0.0,
+        float(args.intersection_no_lane_change_distance),
+    )
+    globals()["INTERSECTION_LANE_PREP_DISTANCE"] = max(
+        globals()["INTERSECTION_NO_LANE_CHANGE_DISTANCE"],
+        float(args.intersection_lane_prep_distance),
+    )
+    globals()["TRAFFIC_LIGHT_NO_LANE_CHANGE_DISTANCE"] = max(
+        globals()["INTERSECTION_NO_LANE_CHANGE_DISTANCE"],
+        float(args.tls_no_lane_change_distance),
+    )
     globals()["TRAFFIC_LIGHT_LANE_PREP_DISTANCE"] = max(
         globals()["TRAFFIC_LIGHT_NO_LANE_CHANGE_DISTANCE"],
+        globals()["INTERSECTION_LANE_PREP_DISTANCE"],
         float(args.tls_lane_prep_distance),
     )
 
@@ -5551,6 +6175,12 @@ def main():
     args.od_local_middle_trim_edges = max(0, int(args.od_local_middle_trim_edges))
     args.od_min_edge_length = max(0.0, float(args.od_min_edge_length))
     args.od_random_walk_fallback = not bool(args.od_no_random_walk_fallback)
+    args.ambulance_interval = max(0.0, float(args.ambulance_interval))
+    args.ambulance_min_euclidean_distance = max(0.0, float(args.ambulance_min_euclidean_distance))
+    args.ambulance_min_route_distance = max(0.0, float(args.ambulance_min_route_distance))
+    args.ambulance_min_route_edges = max(2, int(args.ambulance_min_route_edges))
+    args.ambulance_route_attempts = max(1, int(args.ambulance_route_attempts))
+    args.ambulance_poi_radius = max(1.0, float(args.ambulance_poi_radius))
 
     if args.max_vehicles > MAX_ACTIVE_VEHICLE_CAP:
         print(
