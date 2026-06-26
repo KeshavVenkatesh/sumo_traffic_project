@@ -1,1 +1,10 @@
-python3 realistic_all_intersections_fixed_cycle.py --gui
+python3 compare_fixed_vs_single_vs_all_model_realistic.py \
+  --gui \
+  --episode-seconds 3600 \
+  --eval-steps 10000 \
+  --compare-seeds 42 \
+  --skip-fixed \
+  --skip-single-model \
+  --model-path models/traffic_signal_maskable_ppo_fast_proxy_strong \
+  --vecnormalize-path models/traffic_signal_maskable_ppo_fast_proxy_strong_vecnormalize.pkl \
+  --eval-print-every 20
