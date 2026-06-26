@@ -119,7 +119,7 @@ T_ALL_RED = 2.0
 REQUIRED_EXIT_GAP = 14.0
 QUEUE_SPEED_THRESHOLD = 0.1
 
-MAX_ACTIVE_VEHICLE_CAP = 750
+MAX_ACTIVE_VEHICLE_CAP = 3750
 DEFAULT_SIM_END = 1_000_000_000.0
 
 CAR_LENGTH = 4.8
@@ -5926,21 +5926,21 @@ def main():
     parser.add_argument(
         "--target-vehicles",
         type=int,
-        default=650,
+        default=3250,
         help="The script tries to keep about this many active cars.",
     )
 
     parser.add_argument(
         "--initial-vehicles",
         type=int,
-        default=200,
+        default=1000,
         help="Cars spawned immediately at the start.",
     )
 
     parser.add_argument(
         "--spawn-batch",
         type=int,
-        default=12,
+        default=60,
         help="Maximum cars to add per simulation step when below target.",
     )
 
