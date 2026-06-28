@@ -83,6 +83,34 @@ except ImportError as exc:  # pragma: no cover
 
 
 TARGET_TLS_ID = "cluster_12179861947_12179861948_12179861949_12185616643_#11more"
+
+
+def load_maskable_ppo_for_inference(model_path: str, env, device: str):
+    """Load a MaskablePPO checkpoint for inference only.
+
+    Checkpoints saved with a non-constant learning-rate/clip-range schedule
+    (a Python callable) get cloudpickled together with a reference to the
+    module/file path of whoever trained the model. If that checkpoint is
+    loaded on a different machine/user account (e.g. a teammate's laptop),
+    SB3 still tries to reconstruct that pickled callable during
+    `_setup_model()`, which has been observed to crash natively inside
+    PyTorch rather than raising a catchable Python exception.
+
+    Since we only need this model for inference (action selection), not to
+    resume training, we override those schedule-related fields with inert
+    constants. This avoids ever touching the original pickled closures.
+    """
+    custom_objects = {
+        "learning_rate": 0.0,
+        "lr_schedule": lambda _progress_remaining: 0.0,
+        "clip_range": lambda _progress_remaining: 0.2,
+    }
+    return MaskablePPO.load(
+        str(model_path),
+        env=env,
+        device=device,
+        custom_objects=custom_objects,
+    )
 MODEL_DEFAULT = "models/traffic_signal_maskable_ppo_fast_proxy_strong"
 
 # Center values match the simulation command you have been using for the current
@@ -668,7 +696,12 @@ class ExactSimulationTrafficSignalEnv(gym.Env):
             "next_lane_balance_time": 0.0,
             "next_unconnected_lane_rescue_time": 0.0,
             "next_unjustified_stop_check_time": 0.0,
-            "next_ambulance_spawn": float("inf"),
+            # NOTE: this must be a reachable time (0.0), not float("inf").
+            # Spawning is gated by `sim_time >= next_ambulance_spawn` in
+            # update_ambulances(); if this starts at infinity, that
+            # condition can never become true and ambulances never spawn
+            # for the entire episode, regardless of ambulance_interval.
+            "next_ambulance_spawn": 0.0,
             "active_ambulances": {},
             "od_context": od_context,
             "od_trip_counts": Counter(),
@@ -1047,7 +1080,7 @@ def train(args: argparse.Namespace) -> None:
 
     if args.resume and model_path.with_suffix(".zip").exists():
         print(f"Resuming model from {model_path}.zip")
-        model = MaskablePPO.load(str(model_path), env=train_env, device=args.device)
+        model = load_maskable_ppo_for_inference(model_path, train_env, args.device)
         model.learning_rate = linear_decay(args.lr_start, args.lr_end)
     else:
         print("Starting a fresh exact-simulation MaskablePPO model")
@@ -1149,7 +1182,7 @@ def evaluate(args: argparse.Namespace) -> None:
         eval_env = VecNormalize(eval_env, norm_obs=False, norm_reward=False)
         eval_env.training = False
 
-    model = MaskablePPO.load(str(model_path), env=eval_env, device=args.device)
+    model = load_maskable_ppo_for_inference(model_path, eval_env, args.device)
     obs = eval_env.reset()
     total_reward = 0.0
 
@@ -1298,7 +1331,7 @@ def run_model_episode(args: argparse.Namespace, scenario: TrafficScenario, seed:
         env = VecNormalize(raw_env, norm_obs=False, norm_reward=False)
         env.training = False
 
-    model = MaskablePPO.load(str(Path(args.model_path)), env=env, device=args.device)
+    model = load_maskable_ppo_for_inference(Path(args.model_path), env, args.device)
     obs = env.reset()
     samples: list[dict[str, float]] = []
 
@@ -1453,7 +1486,7 @@ def run_all_model_episode(args: argparse.Namespace, scenario: TrafficScenario, s
         norm_env = VecNormalize(dummy_raw_env, norm_obs=False, norm_reward=False)
         norm_env.training = False
 
-    model = MaskablePPO.load(str(Path(args.model_path)), env=norm_env, device=args.device)
+    model = load_maskable_ppo_for_inference(Path(args.model_path), norm_env, args.device)
 
     samples: list[dict[str, float]] = []
     try:

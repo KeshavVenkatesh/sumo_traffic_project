@@ -119,11 +119,11 @@ T_ALL_RED = 2.0
 REQUIRED_EXIT_GAP = 14.0
 QUEUE_SPEED_THRESHOLD = 0.1
 
-MAX_ACTIVE_VEHICLE_CAP = 3750
+MAX_ACTIVE_VEHICLE_CAP = 750
 DEFAULT_SIM_END = 1_000_000_000.0
 
-CAR_LENGTH = 4.8
-CAR_WIDTH = 1.8
+CAR_LENGTH = 4.08
+CAR_WIDTH = 1.53
 CAR_MIN_GAP = 2.5
 
 # Ambulance / emergency-vehicle helper.
@@ -131,7 +131,7 @@ CAR_MIN_GAP = 2.5
 # still use SUMO's collision avoidance and this script's keep-clear checks.
 # Therefore, do not give them foe-ignore settings, do not forcibly move them
 # onto occupied lanes, and do not apply an artificial low max-speed cap.
-AMBULANCE_SPAWN_INTERVAL = 120.0
+AMBULANCE_SPAWN_INTERVAL = 15.0
 AMBULANCE_COLOR = (255, 50, 50, 255)
 AMBULANCE_MIN_EUCLIDEAN_DISTANCE = 1500.0
 AMBULANCE_MIN_ROUTE_DISTANCE = 1800.0
@@ -139,7 +139,7 @@ AMBULANCE_MIN_ROUTE_EDGES = 20
 AMBULANCE_ROUTE_ATTEMPTS = 100
 AMBULANCE_DEPART_LANE = "free"
 AMBULANCE_DEPART_POS = "random_free"
-AMBULANCE_POI_RADIUS = 250.0
+AMBULANCE_POI_RADIUS = 600.0
 
 TURN_PROBABILITIES = {
     "S": 0.70,
@@ -160,6 +160,33 @@ LANE_PREF_MIN_SPEED = 0.2
 LANE_PREF_MAX_WAITING_TIME = 10.0
 LANE_PREF_INTERVAL = 1.0
 TURN_LANE_PREFERENCE_INDEX = {}
+
+# The shared traffic_light_no_lane_change_distance_for_lane() buffer (100m for
+# signalized approaches) exists to prevent dangerous last-second lane changes
+# for ALL vehicles. But it also blocks apply_turn_lane_preference_to_vehicle()
+# from ever correcting a vehicle that ended up in the wrong lane for its
+# planned turn while it's within that 100m zone -- once a vehicle is in there
+# in the wrong lane, it's stuck for the rest of the approach. We use this much
+# smaller buffer specifically for that corrective check instead, so vehicles
+# get more room to fix a wrong-lane assignment before reaching the stop line.
+LANE_PREF_CORRECTIVE_NO_CHANGE_BUFFER = 5.0
+
+# Safety floor for extend_vehicle_route(): force a route extension whenever
+# the remaining physical distance drops below this, even if the edge-count
+# threshold (min_remaining_edges) hasn't been reached yet. Prevents vehicles
+# from running out of route while still inside/entering a junction when their
+# remaining edges happen to be unusually short.
+MIN_REMAINING_ROUTE_DISTANCE = 150.0
+
+# ---------------------------------------------------------------------------
+# Ambulance yielding: regular vehicles pull toward the shoulder and slow down
+# when an ambulance is detected closing in on their lane/edge from behind.
+# This mirrors real driver behavior on hearing/seeing an approaching siren.
+# ---------------------------------------------------------------------------
+AMBULANCE_YIELD_DETECTION_DISTANCE = 80.0   # meters ahead of the ambulance to scan for cars to warn
+AMBULANCE_YIELD_RELEASE_DISTANCE = 120.0    # meters; release the yield once ambulance is this far past/away
+AMBULANCE_YIELD_SPEED_FACTOR = 0.4          # fraction of normal speed while yielding
+YIELDING_VEHICLES = {}
 
 # Mid-road lane-balancing helper.
 # The existing lane-preference logic only fixes approach-lane choice near
@@ -1707,6 +1734,136 @@ def apply_unjustified_stop_watchdog_to_vehicle(
     return True
 
 
+INTERNAL_LANE_STUCK_TRACKING = {}
+INTERNAL_LANE_STUCK_MIN_TIME = 5.0
+
+
+def rescue_vehicle_stuck_on_internal_lane(
+    veh_id,
+    raw_graph,
+    edge_metadata,
+    core_edges,
+    turn_index,
+    rng,
+    turn_counts,
+    args,
+):
+    """Rescue a vehicle that ran out of route while already on/entering an
+    internal junction lane (lane id starts with ":").
+
+    apply_unjustified_stop_watchdog_to_vehicle() and extend_vehicle_route()
+    both deliberately skip internal-lane vehicles, since under normal
+    operation a junction-lane stop is brief and self-resolving. But if the
+    vehicle's route legitimately ran out right as it entered the junction
+    (most often when its remaining edges were unusually short, e.g. near a
+    complex multi-leg intersection), nothing else will ever rescue it, and a
+    car frozen mid-junction blocks every conflicting movement through that
+    junction -- not just one lane. This is a narrowly-scoped, separate fix
+    for exactly that case.
+    """
+    if is_ambulance(veh_id):
+        return False
+
+    try:
+        lane_id = traci.vehicle.getLaneID(veh_id)
+        if not lane_id or not lane_id.startswith(":"):
+            INTERNAL_LANE_STUCK_TRACKING.pop(veh_id, None)
+            return False
+
+        speed = traci.vehicle.getSpeed(veh_id)
+        route = traci.vehicle.getRoute(veh_id)
+        route_index = traci.vehicle.getRouteIndex(veh_id)
+    except traci.TraCIException:
+        INTERNAL_LANE_STUCK_TRACKING.pop(veh_id, None)
+        return False
+
+    remaining_edges = max(0, len(route) - route_index) if route_index >= 0 else 0
+
+    # Only act when the vehicle is both stopped/near-stopped AND has nowhere
+    # left to go. A normal brief junction-lane stop has remaining_edges > 0
+    # and should not be touched here.
+    if speed > UNJUSTIFIED_STOP_SPEED or remaining_edges > 0:
+        INTERNAL_LANE_STUCK_TRACKING.pop(veh_id, None)
+        return False
+
+    now = current_sim_time()
+    first_seen = INTERNAL_LANE_STUCK_TRACKING.setdefault(veh_id, now)
+    if now - first_seen < INTERNAL_LANE_STUCK_MIN_TIME:
+        return False
+
+    # Find a real (non-internal) edge this internal lane actually leads to,
+    # then give the vehicle a fresh random-walk route starting from there.
+    candidate_edges = lane_outgoing_edges(lane_id, allowed_edges=raw_graph)
+    if not candidate_edges:
+        # Fall back to any outgoing edge at all, even outside raw_graph,
+        # rather than leaving the vehicle stuck with literally no option.
+        candidate_edges = lane_outgoing_edges(lane_id)
+
+    if not candidate_edges:
+        return False
+
+    target_edge = rng.choice(candidate_edges)
+
+    new_route = build_random_walk_route(
+        start_edge=target_edge,
+        lookahead_edges=getattr(args, "route_lookahead_edges", 60),
+        turn_index=turn_index,
+        raw_graph=raw_graph,
+        edge_metadata=edge_metadata,
+        core_edges=core_edges,
+        rng=rng,
+        turn_counts=turn_counts,
+        args=args,
+    )
+
+    if not new_route:
+        new_route = [target_edge]
+
+    try:
+        traci.vehicle.setRoute(veh_id, new_route)
+    except traci.TraCIException:
+        return False
+
+    INTERNAL_LANE_STUCK_TRACKING.pop(veh_id, None)
+    print(
+        f"  [internal-lane rescue] {veh_id} was stuck on {lane_id} with an "
+        f"empty route; rerouted via {target_edge}",
+        flush=True,
+    )
+    return True
+
+
+def apply_internal_lane_rescue_to_all_vehicles(
+    raw_graph,
+    edge_metadata,
+    core_edges,
+    turn_index,
+    rng,
+    turn_counts,
+    args,
+):
+    active_ids = set(traci.vehicle.getIDList())
+    for veh_id in list(INTERNAL_LANE_STUCK_TRACKING.keys()):
+        if veh_id not in active_ids:
+            INTERNAL_LANE_STUCK_TRACKING.pop(veh_id, None)
+
+    rescued = 0
+    for veh_id in active_ids:
+        if rescue_vehicle_stuck_on_internal_lane(
+            veh_id=veh_id,
+            raw_graph=raw_graph,
+            edge_metadata=edge_metadata,
+            core_edges=core_edges,
+            turn_index=turn_index,
+            rng=rng,
+            turn_counts=turn_counts,
+            args=args,
+        ):
+            rescued += 1
+
+    return rescued
+
+
 def apply_unjustified_stop_watchdog_to_all_vehicles(
     raw_graph,
     edge_metadata,
@@ -2553,7 +2710,7 @@ def write_empty_route_file(route_file):
            jmIgnoreJunctionFoeProb="0.0"
            jmTimegapMinor="1.0"
            jmAdvance="0"
-           jmExtraGap="2.5"
+           jmExtraGap="1.0"
            jmIgnoreKeepClearTime="-1"
            jmDriveAfterYellowTime="100"
            jmDriveAfterRedTime="100"/>'''
@@ -4151,8 +4308,16 @@ def apply_turn_lane_preference_to_vehicle(veh_id):
     # Only do lane preference while the car is still moving and far enough
     # upstream. If the vehicle is already queued near the intersection, forcing
     # a lane change can block both lanes and create the deadlock seen in the GUI.
+    #
+    # Note: we intentionally use LANE_PREF_CORRECTIVE_NO_CHANGE_BUFFER here
+    # instead of traffic_light_no_lane_change_distance_for_lane()'s full 100m
+    # zone. That larger buffer is meant to stop autonomous/last-second lane
+    # changes for general safety, but applying it here means a vehicle that's
+    # already in the wrong lane for its planned turn can never be corrected
+    # once it's within 100m -- it just arrives at the stop line in the wrong
+    # lane. A small buffer still avoids changes right at the stop line itself.
     distance_to_end = lane_len - lane_pos
-    no_change_buffer = traffic_light_no_lane_change_distance_for_lane(lane_id)
+    no_change_buffer = LANE_PREF_CORRECTIVE_NO_CHANGE_BUFFER
 
     if speed < LANE_PREF_MIN_SPEED:
         return False
@@ -4873,7 +5038,23 @@ def extend_vehicle_route(
             or has_repeated_tail_pattern(recent_edges)
         )
 
-        if len(remaining) >= min_remaining_edges and not force_loop_reroute:
+        # Edge-count-based lookahead (min_remaining_edges) can be exhausted
+        # while the vehicle is still physically far from running out of road,
+        # if the remaining edges happen to be unusually short (common near
+        # complex multi-leg junctions built from several short connector
+        # edges). That can let a vehicle enter a junction with 0 edges left
+        # in its route, where it gets stuck on an internal junction lane that
+        # most rescue/watchdog logic deliberately skips. As a safeguard, also
+        # force an extension whenever remaining physical distance drops below
+        # MIN_REMAINING_ROUTE_DISTANCE, regardless of edge count.
+        remaining_distance = route_distance(remaining, edge_metadata)
+        force_distance_extend = remaining_distance < MIN_REMAINING_ROUTE_DISTANCE
+
+        if (
+            len(remaining) >= min_remaining_edges
+            and not force_loop_reroute
+            and not force_distance_extend
+        ):
             return False, False
 
         if force_loop_reroute:
@@ -5297,7 +5478,8 @@ def spawn_ambulance(sim_state, raw_graph, edge_metadata, rng, args):
                     fill=True,
                     layer=100,
                 )
-            except Exception:
+            except Exception as exc:
+                print(f"  [ambulance] WARNING: failed to draw A/B markers for {amb_id}: {exc}", flush=True)
                 poi_a = None
                 poi_b = None
 
@@ -5315,6 +5497,171 @@ def spawn_ambulance(sim_state, raw_graph, edge_metadata, rng, args):
             continue
 
     return None
+
+
+def apply_ambulance_yielding(sim_state):
+    """Make nearby regular vehicles slow down and favor the right lane when
+    an active ambulance is closing in on their edge.
+
+    This is a lightweight, geometry-based heuristic (not full siren-detection
+    physics): for each active ambulance, look at its current edge and the
+    next couple of edges on its route, find any non-ambulance vehicle on
+    those edges that's ahead of the ambulance within
+    AMBULANCE_YIELD_DETECTION_DISTANCE, and apply a temporary speed
+    reduction + lane-change request toward a lower lane index (SUMO lane
+    index 0 is generally the rightmost lane). Vehicles are released once the
+    ambulance has passed or moved far enough away.
+    """
+    # Drop any vehicle that left the simulation (arrived, teleported, etc.)
+    # without going through _release_ambulance_yield, so its TraCI
+    # speed/lane-change overrides are never silently leaked.
+    if YIELDING_VEHICLES:
+        active_ids = set(traci.vehicle.getIDList())
+        for veh_id in list(YIELDING_VEHICLES.keys()):
+            if veh_id not in active_ids:
+                YIELDING_VEHICLES.pop(veh_id, None)
+
+    active = sim_state.get("active_ambulances", {})
+    if not active:
+        # No ambulances active: release anyone still marked as yielding.
+        for veh_id in list(YIELDING_VEHICLES.keys()):
+            _release_ambulance_yield(veh_id)
+        return
+
+    # Build the set of (edge_id -> ambulance distance-along-edge) we care
+    # about this step, one small TraCI lookup per active ambulance.
+    ambulance_edges = {}
+    for amb_id in active:
+        try:
+            amb_edge = traci.vehicle.getRoadID(amb_id)
+            amb_route = traci.vehicle.getRoute(amb_id)
+            amb_route_idx = traci.vehicle.getRouteIndex(amb_id)
+            amb_lane_pos = traci.vehicle.getLanePosition(amb_id)
+        except traci.TraCIException:
+            continue
+
+        if amb_edge.startswith(":"):
+            # Ambulance is inside a junction; still worth warning the next edge.
+            pass
+
+        watch_edges = set()
+        if amb_route_idx >= 0:
+            for offset in range(0, 3):
+                idx = amb_route_idx + offset
+                if 0 <= idx < len(amb_route):
+                    watch_edges.add(amb_route[idx])
+        if amb_edge and not amb_edge.startswith(":"):
+            watch_edges.add(amb_edge)
+
+        for edge_id in watch_edges:
+            ambulance_edges.setdefault(edge_id, []).append((amb_id, amb_lane_pos))
+
+    currently_yielding = set(YIELDING_VEHICLES.keys())
+    still_relevant = set()
+
+    for edge_id, amb_list in ambulance_edges.items():
+        try:
+            lane_count = traci.edge.getLaneNumber(edge_id)
+        except traci.TraCIException:
+            continue
+
+        for lane_index in range(lane_count):
+            lane_id = f"{edge_id}_{lane_index}"
+            try:
+                vehicle_ids = traci.lane.getLastStepVehicleIDs(lane_id)
+            except traci.TraCIException:
+                continue
+
+            for veh_id in vehicle_ids:
+                if is_ambulance(veh_id):
+                    continue
+
+                try:
+                    veh_pos = traci.vehicle.getLanePosition(veh_id)
+                except traci.TraCIException:
+                    continue
+
+                # A vehicle should yield if it's ahead of (or very near) any
+                # ambulance sharing this edge, within the detection window.
+                should_yield = False
+                for amb_id, amb_pos in amb_list:
+                    gap = veh_pos - amb_pos
+                    if -10.0 <= gap <= AMBULANCE_YIELD_DETECTION_DISTANCE:
+                        should_yield = True
+                        break
+
+                if should_yield:
+                    still_relevant.add(veh_id)
+                    _apply_ambulance_yield(veh_id)
+
+    # Release vehicles that were yielding but are no longer near any
+    # ambulance's detection window this step.
+    for veh_id in currently_yielding - still_relevant:
+        _release_ambulance_yield(veh_id)
+
+
+def _apply_ambulance_yield(veh_id):
+    if veh_id in YIELDING_VEHICLES:
+        return
+
+    try:
+        original_max_speed = traci.vehicle.getMaxSpeed(veh_id)
+        original_lane_change_mode = traci.vehicle.getLaneChangeMode(veh_id)
+        lane_id = traci.vehicle.getLaneID(veh_id)
+    except traci.TraCIException:
+        return
+
+    YIELDING_VEHICLES[veh_id] = {
+        "original_max_speed": original_max_speed,
+        "original_lane_change_mode": original_lane_change_mode,
+    }
+
+    try:
+        traci.vehicle.setMaxSpeed(veh_id, max(0.5, original_max_speed * AMBULANCE_YIELD_SPEED_FACTOR))
+
+        # Forcing a lane-change request right at/inside a junction is exactly
+        # what every other lane-changing helper in this file avoids (see
+        # traffic_light_no_lane_change_distance_for_lane and its callers).
+        # Doing it here too caused real lcState=overlapping|blocked deadlocks:
+        # multiple vehicles all told to shift toward lane 0 near a junction
+        # at the same moment can mutually block each other and never resolve,
+        # leaving one of them stranded on an internal lane afterward. Only
+        # request the lane change when the vehicle is still far enough from
+        # the end of its current lane for it to be safely completed.
+        if lane_id.startswith(":"):
+            return
+
+        lane_len = cached_lane_length(lane_id)
+        lane_pos = traci.vehicle.getLanePosition(veh_id)
+        distance_to_end = lane_len - lane_pos
+        no_change_buffer = traffic_light_no_lane_change_distance_for_lane(lane_id)
+
+        if no_change_buffer > 0.0 and distance_to_end <= no_change_buffer:
+            # Too close to the junction to safely change lanes; just slow
+            # down (already done above) and let it proceed in its own lane.
+            traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_LOCKED_LANE_CHANGE_MODE)
+            return
+
+        # Allow SUMO to perform a cooperative/strategic lane change toward
+        # the rightmost lane (index 0) if one is available and safe.
+        traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE)
+        current_lane_index = lane_index_from_lane_id(lane_id)
+        if current_lane_index is not None and current_lane_index > 0:
+            traci.vehicle.changeLane(veh_id, current_lane_index - 1, TURN_LANE_CHANGE_DURATION)
+    except traci.TraCIException:
+        pass
+
+
+def _release_ambulance_yield(veh_id):
+    info = YIELDING_VEHICLES.pop(veh_id, None)
+    if info is None:
+        return
+
+    try:
+        traci.vehicle.setMaxSpeed(veh_id, info["original_max_speed"])
+        traci.vehicle.setLaneChangeMode(veh_id, info["original_lane_change_mode"])
+    except traci.TraCIException:
+        pass
 
 
 def update_ambulances(sim_state, raw_graph, edge_metadata, rng, sim_time, args):
@@ -5542,6 +5889,11 @@ def run_simulation_steps(
             args=args,
         )
 
+        # Make nearby regular vehicles slow down and favor the right lane
+        # when an ambulance is closing in, before the keep-clear gate runs.
+        if not getattr(args, "disable_ambulances", False):
+            apply_ambulance_yielding(sim_state)
+
         # Vehicle-level keep-clear / right-of-way gate.
         # Lights stay green according to the fixed cycle; cars decide whether
         # they have enough downstream space to enter the junction. This applies
@@ -5563,6 +5915,20 @@ def run_simulation_steps(
                 sim_state=sim_state,
                 args=args,
             )
+
+            # Separate, narrower rescue for vehicles already stuck on an
+            # internal junction lane with an empty route -- a case the
+            # watchdog above intentionally skips (see its docstring).
+            apply_internal_lane_rescue_to_all_vehicles(
+                raw_graph=raw_graph,
+                edge_metadata=edge_metadata,
+                core_edges=core_edges,
+                turn_index=turn_index,
+                rng=rng,
+                turn_counts=turn_counts,
+                args=args,
+            )
+
             sim_state["next_unjustified_stop_check_time"] = sim_time + getattr(
                 args, "unjustified_stop_check_interval", UNJUSTIFIED_STOP_CHECK_INTERVAL
             )
@@ -5926,21 +6292,21 @@ def main():
     parser.add_argument(
         "--target-vehicles",
         type=int,
-        default=3250,
+        default=650,
         help="The script tries to keep about this many active cars.",
     )
 
     parser.add_argument(
         "--initial-vehicles",
         type=int,
-        default=1000,
+        default=200,
         help="Cars spawned immediately at the start.",
     )
 
     parser.add_argument(
         "--spawn-batch",
         type=int,
-        default=60,
+        default=12,
         help="Maximum cars to add per simulation step when below target.",
     )
 
