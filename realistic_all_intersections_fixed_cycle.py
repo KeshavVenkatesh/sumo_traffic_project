@@ -2346,12 +2346,15 @@ def weighted_edge_choice(rng, edges, edge_metadata):
 
         # Prefer useful driving corridors for OD endpoints, but still allow
         # local roads as trip origins/destinations in access-trip cases.
+        # Softened from (2.5 / 1.4 / 0.45) so spawn points spread more
+        # evenly across local streets too, instead of clustering heavily
+        # on main roads/arterials.
         if category == "main":
-            weight *= 2.5
+            weight *= 1.6
         elif category == "connector":
-            weight *= 1.4
+            weight *= 1.2
         elif category == "local":
-            weight *= 0.45
+            weight *= 0.85
 
         weights.append(max(0.001, weight))
 
@@ -6378,7 +6381,7 @@ def main():
     parser.add_argument(
         "--spawn-grid-size",
         type=int,
-        default=6,
+        default=10,
         help="Geographic grid size used to spread vehicle spawning across the map.",
     )
 
