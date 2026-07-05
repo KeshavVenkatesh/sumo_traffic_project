@@ -72,7 +72,7 @@ TARGET_TLS_ID = "cluster_12179861947_12179861948_12179861949_12185616643_#11more
 REQUIRE_ALL_FOUR_PHASES_FOR_TARGET = True
 
 # New default model name so you do not accidentally resume from the old unsafe model.
-MODEL_FILE = os.path.join(BASE_DIR, "randomized_four_way_model_no_left_conflict_old_scheme")
+MODEL_FILE = os.path.join(BASE_DIR, "randomized_four_way_model_no_left_conflict_throughput")
 
 QUIET_SUMO_ARGS = [
     "--no-warnings", "true",
@@ -89,7 +89,7 @@ TRAIN_WITH_SUMO_LOGS = False
 
 # Speed improvement:
 # 1.0 means half as many SUMO simulationStep calls compared with 0.5.
-STEP_LENGTH = 0.5
+STEP_LENGTH = 1.0
 
 T_GREEN_STRAIGHT = 30.0
 T_GREEN_LEFT = 15.0
@@ -97,8 +97,27 @@ T_YELLOW = 4.0
 T_ALL_RED = 2.0
 
 DECISION_INTERVAL = 5.0
-MIN_GREEN_BEFORE_SWITCH = 8.0
-MAX_GREEN_HOLD = 60.0
+MIN_GREEN_BEFORE_SWITCH = 6.0
+MAX_GREEN_HOLD = 55.0
+
+# Throughput-oriented reward constants.  The previous reward only penalized
+# local wait/queue, which made the controller smooth but too conservative
+# against native SUMO.  These terms reward vehicles completing trips and
+# reward reductions in local queue/wait from one decision to the next.
+ARRIVAL_BONUS = 1.20
+WAIT_DELTA_SCALE = 350.0
+QUEUE_DELTA_SCALE = 8.0
+WAIT_LEVEL_SCALE = 2500.0
+QUEUE_LEVEL_SCALE = 70.0
+SWITCH_PENALTY = 0.08
+HARD_HOLD_PENALTY = 0.35
+STARVATION_START = 38.0
+STARVATION_PENALTY_SCALE = 0.006
+
+# Accumulates arrivals across all SUMO micro-steps inside one RL decision.
+# traci.simulation.getArrivedNumber() only reports the most recent SUMO step,
+# so run_steps adds it up for the reward.
+RUN_STEPS_ARRIVED_ACCUM = 0
 
 # Refresh traffic-light state every 2 simulated seconds during green.
 SIGNAL_UPDATE_INTERVAL = 2.0
@@ -736,7 +755,20 @@ def start_all_red(tls_id, controller):
     controller["remaining"] = T_ALL_RED
 
 
+def reset_run_step_arrival_counter():
+    global RUN_STEPS_ARRIVED_ACCUM
+    RUN_STEPS_ARRIVED_ACCUM = 0
+
+
+def consume_run_step_arrivals():
+    global RUN_STEPS_ARRIVED_ACCUM
+    value = int(RUN_STEPS_ARRIVED_ACCUM)
+    RUN_STEPS_ARRIVED_ACCUM = 0
+    return value
+
+
 def run_steps(seconds, tls_id=None, controller=None):
+    global RUN_STEPS_ARRIVED_ACCUM
     steps = int(round(seconds / STEP_LENGTH))
 
     for _ in range(steps):
@@ -744,6 +776,11 @@ def run_steps(seconds, tls_id=None, controller=None):
             return False
 
         traci.simulationStep()
+
+        try:
+            RUN_STEPS_ARRIVED_ACCUM += int(traci.simulation.getArrivedNumber())
+        except traci.TraCIException:
+            pass
 
         if tls_id is not None and controller is not None:
             if controller["mode"] == "green":
@@ -898,27 +935,62 @@ def get_observation(controller):
     return np.array(obs, dtype=np.float32)
 
 
-def compute_reward(controller, switched):
-    """
-    Rescaled reward.
+def inactive_core_queue(controller):
+    """Queued protected movements that are not currently served.
 
-    This version is intentionally smaller in magnitude so PPO's
-    value network can learn more easily.
+    Right turns are permissive in every phase, so starvation mainly means
+    left/straight protected movements waiting while another protected phase is
+    held too long.
+    """
+    try:
+        active_rules = controller["phases"][controller["phase_pos"]]["rules"]
+    except Exception:
+        active_rules = {}
+
+    waiting = 0.0
+    for label in MOVEMENT_LABELS:
+        if label.endswith("-R"):
+            continue
+        if active_rules.get(label) == "G":
+            continue
+        q, _w = movement_queue_and_wait(controller, label)
+        waiting += q
+    return waiting
+
+
+def compute_reward(controller, switched, arrived, prev_wait, prev_queue):
+    """Throughput-biased reward for beating native SUMO throughput.
+
+    The old reward only penalized the current local wait/queue level.  That
+    learned a smooth controller, but it had no direct incentive to clear more
+    vehicles.  This reward still punishes congestion, but adds:
+      - positive reward for completed trips during the decision window
+      - positive reward when local wait/queue decrease from the previous window
+      - smaller switch penalty so the controller can use short left phases
     """
     total_wait, total_queue = total_controlled_wait_and_queue(controller)
 
-    reward = 0.0
+    wait_delta = float(prev_wait) - float(total_wait)
+    queue_delta = float(prev_queue) - float(total_queue)
 
-    reward -= total_wait / 500.0
-    reward -= total_queue / 50.0
+    reward = 0.0
+    reward += wait_delta / WAIT_DELTA_SCALE
+    reward += queue_delta / QUEUE_DELTA_SCALE
+    reward -= total_wait / WAIT_LEVEL_SCALE
+    reward -= total_queue / QUEUE_LEVEL_SCALE
+    reward += float(arrived) * ARRIVAL_BONUS
 
     if switched:
-        reward -= 0.2
+        reward -= SWITCH_PENALTY
 
-    if controller["phase_elapsed"] > MAX_GREEN_HOLD:
-        reward -= 1.0
+    elapsed = float(controller.get("phase_elapsed", 0.0))
+    if elapsed > MAX_GREEN_HOLD:
+        reward -= HARD_HOLD_PENALTY
 
-    return float(reward)
+    if elapsed > STARVATION_START:
+        reward -= (elapsed - STARVATION_START) * inactive_core_queue(controller) * STARVATION_PENALTY_SCALE
+
+    return float(reward), total_wait, total_queue
 
 
 # ============================================================
@@ -955,6 +1027,9 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
 
         self.started = False
         self.controller = None
+        self.prev_wait = 0.0
+        self.prev_queue = 0.0
+        self.episode_arrived = 0
 
         self.action_space = spaces.Discrete(5)
 
@@ -1042,24 +1117,55 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
         if self.controller is None:
             raise RuntimeError(f"Traffic light {chosen_tls} is not usable.")
 
+        self.prev_wait, self.prev_queue = total_controlled_wait_and_queue(self.controller)
+        self.episode_arrived = 0
+        reset_run_step_arrival_counter()
+
         return get_observation(self.controller), {}
 
     def action_masks(self):
         mask = np.zeros(5, dtype=bool)
-        mask[0] = True
 
         if self.controller is None:
+            mask[0] = True
             return mask
 
+        if self.controller.get("mode") != "green":
+            mask[0] = True
+            return mask
+
+        elapsed = float(self.controller.get("phase_elapsed", 0.0))
+
+        # Match evaluation: before min-green, only hold is legal.
+        if elapsed < MIN_GREEN_BEFORE_SWITCH:
+            mask[0] = True
+            return mask
+
+        # Holding is legal until the hard max.  At/after the hard max, force a
+        # switch by masking out hold.
+        if elapsed < MAX_GREEN_HOLD:
+            mask[0] = True
+
+        current_pos = self.controller["phase_pos"]
         for phase in self.controller["phases"]:
+            phase_pos = self.controller["slot_to_pos"].get(phase["slot"])
+            if phase_pos is None or phase_pos == current_pos:
+                continue
             action_index = phase["slot"] + 1
             mask[action_index] = True
 
+        if not mask.any():
+            mask[0] = True
         return mask
 
     def step(self, action):
         action = int(action)
+        mask = self.action_masks()
+        if action < 0 or action >= len(mask) or not mask[action]:
+            action = 0 if mask[0] else int(np.flatnonzero(mask)[0])
+
         switched = False
+        reset_run_step_arrival_counter()
 
         if action > 0:
             desired_slot = action - 1
@@ -1095,8 +1201,19 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
             self.controller,
         )
 
+        arrived = consume_run_step_arrivals()
+        self.episode_arrived += int(arrived)
+
         obs = get_observation(self.controller)
-        reward = compute_reward(self.controller, switched)
+        reward, total_wait, total_queue = compute_reward(
+            self.controller,
+            switched=switched,
+            arrived=arrived,
+            prev_wait=self.prev_wait,
+            prev_queue=self.prev_queue,
+        )
+        self.prev_wait = total_wait
+        self.prev_queue = total_queue
 
         sim_time = traci.simulation.getTime()
 
@@ -1116,6 +1233,10 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
             "background_route": os.path.basename(self.current_background_route_file),
             "max_num_vehicles": self.current_max_num_vehicles,
             "sumo_seed": self.current_sumo_seed,
+            "arrived": arrived,
+            "episode_arrived": self.episode_arrived,
+            "controlled_wait": total_wait,
+            "controlled_queue": total_queue,
         }
 
         return obs, reward, terminated, truncated, info

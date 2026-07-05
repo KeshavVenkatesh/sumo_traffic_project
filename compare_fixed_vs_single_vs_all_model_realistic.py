@@ -82,8 +82,12 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
-TARGET_TLS_ID = "cluster_12179861947_12179861948_12179861949_12185616643_#11more"
-MODEL_DEFAULT = "models/traffic_signal_maskable_ppo_fast_proxy_strong"
+# No hardcoded / automatically chosen anchor TLS.
+# Single-TLS training/evaluation can still be run only when the user explicitly
+# passes --tls-id, but fixed-cycle and all-model evaluation do not choose or
+# require any target intersection.
+TARGET_TLS_ID = None
+MODEL_DEFAULT = "models/traffic_signal_maskable_ppo_throughput_reward"
 
 # Center values match the simulation command you have been using for the current
 # file.  Training randomizes around these, but evaluation can lock to them.
@@ -109,10 +113,10 @@ ROUTING_MODE_OD = getattr(sim, "ROUTING_MODE_OD", "od")
 OD_DEPART_LANE = getattr(sim, "OD_DEPART_LANE", "free")
 
 # Action timing. The agent can switch after a minimum green, but it is punished
-# and eventually forced if it starves a phase for too long.
-MIN_GREEN_BEFORE_SWITCH = 10.0
-SOFT_MAX_GREEN = 75.0
-HARD_MAX_GREEN = 95.0
+# and eventually forced if it starves a phase for too long. Throughput version allows short protected-left phases.
+MIN_GREEN_BEFORE_SWITCH = 6.0
+SOFT_MAX_GREEN = 42.0
+HARD_MAX_GREEN = 55.0
 
 # Reward scaling. Values are deliberately moderate because raw SUMO wait-time
 # can be very large and noisy.
@@ -285,8 +289,12 @@ def reset_sim_globals() -> None:
         "KEEP_CLEAR_HOLD_START_TIME",
         "KEEP_CLEAR_FORCE_RELEASE_UNTIL",
         "TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES",
+        "ROUTE_LANE_COMMITTED_VEHICLES",
+        "ROUTE_LANE_COMMITTED_EDGE",
+        "EMERGENCY_ROUTE_REROUTE_LAST",
         "APPROACH_TURN_DECISIONS",
         "APPROACH_TURN_COUNTS",
+        "APPROACH_TURN_COUNTS_BY_EDGE",
         "VEHICLE_EDGE_HISTORY",
         "VEHICLE_LAST_EDGE",
         "LANE_BALANCE_LAST_CHANGE",
@@ -338,10 +346,10 @@ def make_sim_args(scenario: TrafficScenario, route_file: str, episode_seconds: i
     args.target_vehicles = scenario.target_vehicles
     args.initial_vehicles = scenario.initial_vehicles
     args.spawn_batch = scenario.spawn_batch
-    args.spawn_attempts = 40
+    args.spawn_attempts = int(getattr(scenario, "spawn_attempts", 4)) if hasattr(scenario, "spawn_attempts") else 4
     args.route_lookahead_edges = scenario.route_lookahead_edges
     args.min_remaining_edges = scenario.min_remaining_edges
-    args.recovery_attempts = 20
+    args.recovery_attempts = 8
     args.spawn_grid_size = scenario.spawn_grid_size
     args.local_road_penalty = scenario.local_road_penalty
     args.local_to_local_penalty = scenario.local_to_local_penalty
@@ -403,25 +411,35 @@ def make_sim_args(scenario: TrafficScenario, route_file: str, episode_seconds: i
 
 
 def movement_queue_and_wait(controller: dict[str, Any], movement_label: str) -> tuple[float, float]:
-    veh_ids: set[str] = set()
-    for lane_id in controller["movement_in_lanes_cache"].get(movement_label, set()):
-        try:
-            veh_ids.update(sim.traci.lane.getLastStepVehicleIDs(lane_id))
-        except sim.traci.TraCIException:
-            continue
+    """Fast movement queue/wait estimate.
 
+    The old version fetched every vehicle ID on every incoming lane and then
+    asked TraCI for each vehicle's speed and waiting time. In all-model mode
+    that becomes extremely expensive because it runs for many traffic lights.
+    Lane-level halting/waiting-time calls give the same kind of signal with far
+    fewer Python <-> SUMO round trips.
+    """
     queue = 0.0
     wait = 0.0
-    for veh_id in veh_ids:
+    for lane_id in controller["movement_in_lanes_cache"].get(movement_label, set()):
         try:
-            speed = sim.traci.vehicle.getSpeed(veh_id)
-            if speed < sim.QUEUE_SPEED_THRESHOLD:
-                queue += 1.0
-            wait += sim.traci.vehicle.getWaitingTime(veh_id)
-        except sim.traci.TraCIException:
-            continue
+            queue += float(sim.traci.lane.getLastStepHaltingNumber(lane_id))
+            wait += float(sim.traci.lane.getWaitingTime(lane_id))
+        except Exception:
+            # Fallback for unusual TraCI builds/lane IDs.
+            try:
+                veh_ids = sim.traci.lane.getLastStepVehicleIDs(lane_id)
+            except sim.traci.TraCIException:
+                continue
+            for veh_id in veh_ids:
+                try:
+                    speed = sim.traci.vehicle.getSpeed(veh_id)
+                    if speed < sim.QUEUE_SPEED_THRESHOLD:
+                        queue += 1.0
+                    wait += sim.traci.vehicle.getWaitingTime(veh_id)
+                except sim.traci.TraCIException:
+                    continue
     return queue, wait
-
 
 def target_wait_and_queue(controller: dict[str, Any]) -> tuple[float, float]:
     return sim.total_controlled_wait_and_queue(controller)
@@ -486,19 +504,18 @@ def get_observation(controller: dict[str, Any], episode_seconds: int) -> np.ndar
     return np.array(obs, dtype=np.float32)
 
 class ExactSimulationTrafficSignalEnv(gym.Env):
-    """Gym wrapper around the current realistic simulation file.
+    """Single-TLS Gym wrapper around the current realistic simulation file.
 
-    One selected traffic light is controlled by RL.  All normal vehicle motion,
-    routing, lane changing, anti-gridlock logic, and phantom-stop repair come
-    directly from realistic_all_intersections_fixed_cycle.py.  Ambulances are
-    disabled through args.disable_ambulances=True.
+    This class is only for explicit single-intersection training/evaluation.
+    It no longer has a default anchor TLS.  Fixed-cycle and copied all-model
+    evaluation use AnchorlessSimulationEpisode below instead.
     """
 
     metadata = {"render_modes": []}
 
     def __init__(
         self,
-        tls_id: str = TARGET_TLS_ID,
+        tls_id: Optional[str] = TARGET_TLS_ID,
         episode_seconds: int = 900,
         gui: bool = False,
         randomize_scenarios: bool = True,
@@ -617,6 +634,13 @@ class ExactSimulationTrafficSignalEnv(gym.Env):
 
         self.controllers, self.skipped = sim.build_all_fixed_controllers(rng=self.rng, args=self.args)
         sim.rebuild_traffic_light_approach_lanes(self.controllers)
+
+        if self.tls_id is None:
+            raise RuntimeError(
+                "No target TLS was provided. This single-TLS environment no longer "
+                "auto-picks an anchor intersection. Use the all-model/fixed-cycle "
+                "anchorless runners, or pass --tls-id explicitly for a single-TLS test."
+            )
 
         self.controller = next((c for c in self.controllers if c["tls_id"] == self.tls_id), None)
         if self.controller is None:
@@ -911,6 +935,215 @@ class ExactSimulationTrafficSignalEnv(gym.Env):
         return info
 
 
+
+class PolicyShapeEnv(gym.Env):
+    """Tiny env used only to load VecNormalize/model shapes without starting SUMO."""
+
+    metadata = {"render_modes": []}
+
+    def __init__(self):
+        super().__init__()
+        self.action_space = spaces.Discrete(5)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(30,), dtype=np.float32)
+
+    def reset(self, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None):
+        super().reset(seed=seed)
+        return np.zeros((30,), dtype=np.float32), {}
+
+    def step(self, action: int):
+        return np.zeros((30,), dtype=np.float32), 0.0, False, False, {}
+
+    def action_masks(self) -> np.ndarray:
+        return np.ones(5, dtype=bool)
+
+
+class AnchorlessSimulationEpisode:
+    """Direct SUMO episode with no target/anchor TLS.
+
+    This is used for fixed-cycle and all-model evaluation.  It builds every
+    usable traffic-light controller from the current map and never searches for,
+    selects, or validates a target TLS.
+    """
+
+    def __init__(
+        self,
+        scenario: TrafficScenario,
+        seed: int,
+        args: argparse.Namespace,
+        gui: bool = False,
+        env_rank: int = 0,
+    ):
+        self.scenario = scenario
+        self.seed = int(seed)
+        self.outer_args = args
+        self.gui = bool(gui)
+        self.env_rank = int(env_rank)
+        self.args = make_sim_args(
+            scenario=scenario,
+            route_file=os.path.join(
+                sim.BASE_DIR,
+                f"random_drive_dynamic_turns_anchorless_{os.getpid()}_{self.env_rank}.rou.xml",
+            ),
+            episode_seconds=int(args.episode_seconds),
+            gui=bool(gui),
+        )
+        self.route_file = self.args.route_file
+        self.rng = random.Random(self.scenario.seed)
+        self.turn_counts: Counter[str] = Counter()
+        self.controllers: list[dict[str, Any]] = []
+        self.skipped: list[str] = []
+        self.sim_state: dict[str, Any] = {}
+        self.main_start_edges: Any = None
+        self.turn_index: Any = None
+        self.raw_graph: dict[str, list[str]] = {}
+        self.edge_metadata: dict[str, Any] = {}
+        self.core_edges: set[str] = set()
+        self.total_arrived = 0
+        self.started = False
+
+    def _sumo_cmd(self) -> list[str]:
+        binary = sim.SUMO_GUI_BINARY if self.gui else sim.SUMO_HEADLESS_BINARY
+        return [
+            binary,
+            "-n", sim.NET_FILE,
+            "-r", self.route_file,
+            "--start",
+            "--step-length", str(sim.STEP_LENGTH),
+            "--end", str(float(self.outer_args.episode_seconds)),
+            "--seed", str(self.scenario.seed),
+            "--max-num-vehicles", str(self.scenario.max_vehicles),
+            "--max-depart-delay", str(self.scenario.max_depart_delay),
+            "--time-to-teleport", str(self.scenario.time_to_teleport),
+            "--ignore-route-errors", "true",
+            "--quit-on-end", "false",
+            *sim.QUIET_SUMO_ARGS,
+        ]
+
+    def reset(self) -> dict[str, Any]:
+        reset_sim_globals()
+        apply_sim_distance_globals(self.scenario)
+        sim.write_empty_route_file(self.route_file)
+
+        if self.gui:
+            sim.ensure_xquartz()
+
+        sim.traci.start(self._sumo_cmd())
+        self.started = True
+
+        self.controllers, self.skipped = sim.build_all_fixed_controllers(rng=self.rng, args=self.args)
+        sim.rebuild_traffic_light_approach_lanes(self.controllers)
+
+        valid_edges = sim.get_valid_passenger_edges()
+        self.edge_metadata = sim.build_edge_metadata(valid_edges)
+        self.raw_graph = sim.build_raw_successor_graph(valid_edges)
+        self.raw_graph = sim.remove_hardcoded_loop_region_from_graph(self.raw_graph)
+        self.core_edges = set(self.raw_graph)
+
+        start_candidates = list(self.raw_graph.keys())
+        if not start_candidates:
+            raise RuntimeError("No valid start edges were found.")
+
+        self.main_start_edges = sim.build_spawn_zones(
+            start_edges=start_candidates,
+            edge_metadata=self.edge_metadata,
+            grid_size=self.args.spawn_grid_size,
+        ) or start_candidates
+
+        self.turn_index = sim.build_turn_decision_index(
+            controllers=self.controllers,
+            raw_graph=self.raw_graph,
+        )
+
+        od_context = None
+        if sim.use_od_routing(self.args):
+            od_context = sim.build_od_context(
+                valid_edges=valid_edges,
+                raw_graph=self.raw_graph,
+                edge_metadata=self.edge_metadata,
+                args=self.args,
+            )
+
+        sim.APPROACH_DECISION_INDEX = sim.build_approach_decision_index(self.raw_graph)
+        sim.TURN_LANE_PREFERENCE_INDEX = sim.APPROACH_DECISION_INDEX
+
+        self.sim_state = {
+            "next_vehicle_id": 0,
+            "next_route_id": 0,
+            "next_spawn_zone_index": 0,
+            "next_od_origin_zone_index": 0,
+            "next_lane_pref_time": 0.0,
+            "next_lane_balance_time": 0.0,
+            "next_unconnected_lane_rescue_time": 0.0,
+            "next_unjustified_stop_check_time": 0.0,
+            "next_ambulance_spawn": float("inf"),
+            "active_ambulances": {},
+            "od_context": od_context,
+            "od_trip_counts": Counter(),
+            "od_movement_counts": Counter(),
+            "od_route_failures": 0,
+        }
+
+        sim.fill_vehicle_population(
+            sim_state=self.sim_state,
+            target_count=self.args.initial_vehicles,
+            max_to_spawn=self.args.initial_vehicles,
+            start_edges=self.main_start_edges,
+            turn_index=self.turn_index,
+            raw_graph=self.raw_graph,
+            edge_metadata=self.edge_metadata,
+            core_edges=self.core_edges,
+            rng=self.rng,
+            turn_counts=self.turn_counts,
+            args=self.args,
+        )
+
+        self.total_arrived = 0
+        return self.info()
+
+    def close(self) -> None:
+        if self.started:
+            try:
+                sim.traci.close(False)
+            except Exception:
+                pass
+        self.started = False
+
+    def info(self, **extra: Any) -> dict[str, Any]:
+        info: dict[str, Any] = {
+            "target_queue": 0.0,
+            "target_wait": 0.0,
+            "total_arrived": self.total_arrived,
+            "ambulance_count": len(self.sim_state.get("active_ambulances", {})),
+        }
+        if self.started:
+            try:
+                info.update(
+                    sim_time=sim.traci.simulation.getTime(),
+                    active_vehicles=sim.traci.vehicle.getIDCount(),
+                )
+            except Exception:
+                pass
+        info.update(extra)
+        return info
+
+
+def load_model_with_vecnormalize(args: argparse.Namespace, seed: int, label: str):
+    """Load policy + VecNormalize using a no-SUMO dummy env."""
+    dummy_raw_env = DummyVecEnv([lambda: Monitor(PolicyShapeEnv())])
+    vecnorm_path = find_vecnormalize_path(Path(args.model_path), getattr(args, 'vecnormalize_path', None))
+    if vecnorm_path is not None:
+        print(f'[{label} seed {seed}] Loading VecNormalize stats from {vecnorm_path}')
+        norm_env = VecNormalize.load(str(vecnorm_path), dummy_raw_env)
+        norm_env.training = False
+        norm_env.norm_reward = False
+    else:
+        print(f'[{label} seed {seed}] Warning: no VecNormalize stats found; using raw observations.')
+        norm_env = VecNormalize(dummy_raw_env, norm_obs=False, norm_reward=False)
+        norm_env.training = False
+
+    model = MaskablePPO.load(str(Path(args.model_path)), env=norm_env, device=args.device)
+    return model, norm_env
+
 def build_fixed_scenario(seed: int = 42, args: Optional[argparse.Namespace] = None) -> TrafficScenario:
     max_vehicles = getattr(args, "max_vehicle_center", SIM_CENTER_MAX_VEHICLES) if args is not None else SIM_CENTER_MAX_VEHICLES
     target = getattr(args, "target_vehicle_center", SIM_CENTER_TARGET_VEHICLES) if args is not None else SIM_CENTER_TARGET_VEHICLES
@@ -1091,7 +1324,7 @@ def train(args: argparse.Namespace) -> None:
     print("  imported simulation file: realistic_all_intersections_fixed_cycle.py")
     print("  ambulances:              disabled")
     print("  routing mode:            OD fastest routes")
-    print(f"  target TLS:              {args.tls_id}")
+    print(f"  explicit single TLS:     {args.tls_id}")
     print(f"  max vehicle center:      {args.max_vehicle_center}")
     print(f"  target vehicle center:   {args.target_vehicle_center}")
     print(f"  initial vehicle center:  {args.initial_vehicle_center}")
@@ -1205,6 +1438,12 @@ def safe_mean(values: list[float]) -> float:
 
 def safe_max(values: list[float]) -> float:
     return float(max(values)) if values else 0.0
+
+
+def runtime_interval_steps(args: argparse.Namespace, name: str, default_seconds: float) -> int:
+    """Convert a seconds interval into whole SUMO steps."""
+    seconds = float(getattr(args, name, default_seconds) or default_seconds)
+    return max(1, int(round(seconds / max(float(sim.STEP_LENGTH), 1e-9))))
 
 
 def collect_sample(samples: list[dict[str, float]], info: dict[str, Any], reward: float = 0.0) -> None:
@@ -1397,180 +1636,246 @@ def apply_model_action_to_controller(controller: dict[str, Any], action: int) ->
     return switched, forced
 
 
-def run_all_model_episode(args: argparse.Namespace, scenario: TrafficScenario, seed: int) -> dict[str, float | int | str]:
-    """Copy the same single-intersection policy onto every compatible TLS.
 
-    This is an evaluation experiment only. The policy was trained as a shared
-    local controller, not as a coordinated multi-agent controller.
+def _collect_equal_time_metric_sample(
+    samples: list[dict[str, float]],
+    episode: AnchorlessSimulationEpisode,
+    spawned_window: int,
+    extended_window: int,
+    recovered_window: int,
+    arrived_window: int,
+) -> dict[str, Any]:
+    """Collect one expensive global metric sample.
+
+    This helper is shared by fixed-cycle and all-model comparisons so both
+    controllers are summarized from the same simulated-time sampling schedule.
+    The per-window counters are accumulated between metric samples instead of
+    representing only the most recent SUMO step/chunk.
     """
-    env = ExactSimulationTrafficSignalEnv(
-        tls_id=args.tls_id,
-        episode_seconds=args.episode_seconds,
-        gui=bool(args.gui),
-        randomize_scenarios=False,
-        base_seed=seed,
-        env_rank=0,
-        print_scenarios=args.print_scenarios,
-        fixed_scenario=scenario,
-        max_vehicle_center=args.max_vehicle_center,
-        target_center=args.target_vehicle_center,
-        initial_center=args.initial_vehicle_center,
-        spawn_batch_center=args.spawn_batch_center,
-        green_duration_center=args.green_duration_center,
-        density_spread=args.density_spread,
-        initial_spread=args.initial_spread,
+    global_wait, global_queue, avg_speed = network_wait_queue_speed()
+    info = episode.info(
+        spawned=spawned_window,
+        extended=extended_window,
+        recovered=recovered_window,
+        arrived=arrived_window,
+        global_wait=global_wait,
+        global_queue=global_queue,
+        avg_speed=avg_speed,
+    )
+    collect_sample(samples, info, reward=0.0)
+    return info
+
+
+def _empty_metric_info(episode: AnchorlessSimulationEpisode) -> dict[str, Any]:
+    return episode.info(
+        spawned=0,
+        extended=0,
+        recovered=0,
+        arrived=0,
+        global_wait=0.0,
+        global_queue=0.0,
+        avg_speed=0.0,
     )
 
-    # Load VecNormalize stats without starting another SUMO instance.
-    dummy_raw_env = DummyVecEnv([
-        lambda: Monitor(ExactSimulationTrafficSignalEnv(
-            tls_id=args.tls_id,
-            episode_seconds=args.episode_seconds,
-            gui=False,
-            randomize_scenarios=False,
-            base_seed=seed,
-            env_rank=999,
-            print_scenarios=False,
-            fixed_scenario=scenario,
-            max_vehicle_center=args.max_vehicle_center,
-            target_center=args.target_vehicle_center,
-            initial_center=args.initial_vehicle_center,
-            spawn_batch_center=args.spawn_batch_center,
-            green_duration_center=args.green_duration_center,
-            density_spread=args.density_spread,
-            initial_spread=args.initial_spread,
-        ))
-    ])
 
-    vecnorm_path = find_vecnormalize_path(Path(args.model_path), getattr(args, 'vecnormalize_path', None))
-    if vecnorm_path is not None:
-        print(f'[all-model seed {seed}] Loading VecNormalize stats from {vecnorm_path}')
-        norm_env = VecNormalize.load(str(vecnorm_path), dummy_raw_env)
-        norm_env.training = False
-        norm_env.norm_reward = False
-    else:
-        print(f'[all-model seed {seed}] Warning: no VecNormalize stats found; using raw observations.')
-        norm_env = VecNormalize(dummy_raw_env, norm_obs=False, norm_reward=False)
-        norm_env.training = False
+def run_all_model_episode(args: argparse.Namespace, scenario: TrafficScenario, seed: int) -> dict[str, float | int | str]:
+    """Copy the same learned local policy onto every compatible TLS.
 
-    model = MaskablePPO.load(str(Path(args.model_path)), env=norm_env, device=args.device)
+    Fast anchorless version with fair metrics: model control still runs one SUMO
+    second at a time for smooth GUI/control, but expensive metric samples are
+    collected on the same simulated-time grid as fixed-cycle mode.
+    """
+    episode = AnchorlessSimulationEpisode(
+        scenario=scenario,
+        seed=seed,
+        args=args,
+        gui=bool(args.gui),
+        env_rank=0,
+    )
+    model, norm_env = load_model_with_vecnormalize(args, seed, 'all-model')
 
     samples: list[dict[str, float]] = []
     try:
-        _obs, _info = env.reset(seed=seed)
-        decision_steps = max(1, int(round(sim.DECISION_INTERVAL / sim.STEP_LENGTH)))
+        episode.reset()
 
-        controllable_count = sum(1 for c in env.controllers if not c.get('disabled'))
-        print(f'[all-model seed {seed}] controlling {controllable_count} traffic lights with copied policy')
+        policy_period_steps = runtime_interval_steps(args, 'model_update_period', 10.0)
+        metrics_interval = max(float(sim.STEP_LENGTH), float(getattr(args, 'metrics_interval', 10.0)))
+        print_interval = max(float(sim.STEP_LENGTH), float(getattr(args, 'eval_print_every', 20)))
+        decision_steps = 1
+
+        active_controllers = [c for c in episode.controllers if not c.get('disabled')]
+        controllable_count = len(active_controllers)
+        print(
+            f'[all-model seed {seed}] FAST anchorless control of {controllable_count} traffic lights '
+            f'(policy period={policy_period_steps} sim steps, metrics every {metrics_interval:g} sim seconds)'
+        )
+
+        last_info: dict[str, Any] = _collect_equal_time_metric_sample(
+            samples=samples,
+            episode=episode,
+            spawned_window=0,
+            extended_window=0,
+            recovered_window=0,
+            arrived_window=0,
+        )
+        next_metrics_time = metrics_interval
+        next_print_time = print_interval
+        window_spawned = 0
+        window_extended = 0
+        window_recovered = 0
+        window_arrived = 0
 
         for step in range(1, args.eval_steps + 1):
-            active_controllers = [c for c in env.controllers if not c.get('disabled')]
+            # Stagger model work. A larger period reduces observation/model calls.
             if active_controllers:
-                obs_batch = np.stack([
-                    get_observation(controller, args.episode_seconds)
-                    for controller in active_controllers
-                ]).astype(np.float32)
-                masks = np.stack([
-                    valid_action_mask_for_controller(controller)
-                    for controller in active_controllers
-                ]).astype(bool)
+                bucket = (step - 1) % policy_period_steps
+                controllers_to_update = [
+                    controller
+                    for idx, controller in enumerate(active_controllers)
+                    if idx % policy_period_steps == bucket
+                ]
 
-                # The model was trained through VecNormalize, so apply the same
-                # observation normalization before predicting controller actions.
-                try:
-                    normalized_obs = norm_env.normalize_obs(obs_batch)
-                except Exception:
-                    normalized_obs = obs_batch
+                if controllers_to_update:
+                    obs_batch = np.stack([
+                        get_observation(controller, args.episode_seconds)
+                        for controller in controllers_to_update
+                    ]).astype(np.float32)
+                    masks = np.stack([
+                        valid_action_mask_for_controller(controller)
+                        for controller in controllers_to_update
+                    ]).astype(bool)
 
-                try:
-                    actions, _ = model.predict(
-                        normalized_obs,
-                        deterministic=True,
-                        action_masks=masks,
-                    )
-                except Exception:
-                    actions, _ = model.predict(normalized_obs, deterministic=True)
+                    try:
+                        normalized_obs = norm_env.normalize_obs(obs_batch)
+                    except Exception:
+                        normalized_obs = obs_batch
 
-                for controller, action in zip(active_controllers, np.asarray(actions).reshape(-1)):
-                    apply_model_action_to_controller(controller, int(action))
+                    try:
+                        actions, _ = model.predict(
+                            normalized_obs,
+                            deterministic=True,
+                            action_masks=masks,
+                        )
+                    except Exception:
+                        actions, _ = model.predict(normalized_obs, deterministic=True)
+
+                    for controller, action in zip(controllers_to_update, np.asarray(actions).reshape(-1)):
+                        apply_model_action_to_controller(controller, int(action))
 
             arrived, spawned, extended, recovered = sim.run_simulation_steps(
                 num_steps=decision_steps,
-                controllers=env.controllers,
-                start_edges=env.main_start_edges,
-                turn_index=env.turn_index,
-                raw_graph=env.raw_graph,
-                edge_metadata=env.edge_metadata,
-                core_edges=env.core_edges,
-                rng=env.rng,
-                turn_counts=env.turn_counts,
-                sim_state=env.sim_state,
-                args=env.args,
+                controllers=episode.controllers,
+                start_edges=episode.main_start_edges,
+                turn_index=episode.turn_index,
+                raw_graph=episode.raw_graph,
+                edge_metadata=episode.edge_metadata,
+                core_edges=episode.core_edges,
+                rng=episode.rng,
+                turn_counts=episode.turn_counts,
+                sim_state=episode.sim_state,
+                args=episode.args,
             )
-            env.total_arrived += arrived
+            episode.total_arrived += arrived
+            window_arrived += int(arrived)
+            window_spawned += int(spawned)
+            window_extended += int(extended)
+            window_recovered += int(recovered)
 
-            assert env.controller is not None
-            target_wait, target_queue = target_wait_and_queue(env.controller)
-            global_wait, global_queue, avg_speed = network_wait_queue_speed()
-            info = env._info(
-                spawned=spawned,
-                extended=extended,
-                recovered=recovered,
-                arrived=arrived,
-                target_wait=target_wait,
-                target_queue=target_queue,
-                global_wait=global_wait,
-                global_queue=global_queue,
-                avg_speed=avg_speed,
+            cheap_info = episode.info(
+                spawned=window_spawned,
+                extended=window_extended,
+                recovered=window_recovered,
+                arrived=window_arrived,
+                global_wait=float(last_info.get('global_wait', 0.0) or 0.0),
+                global_queue=float(last_info.get('global_queue', 0.0) or 0.0),
+                avg_speed=float(last_info.get('avg_speed', 0.0) or 0.0),
             )
-            collect_sample(samples, info, reward=0.0)
+            sim_time = float(cheap_info.get('sim_time', 0.0) or 0.0)
 
-            if step % args.eval_print_every == 0:
+            if sim_time + 1e-9 >= next_metrics_time or sim_time >= float(args.episode_seconds):
+                last_info = _collect_equal_time_metric_sample(
+                    samples=samples,
+                    episode=episode,
+                    spawned_window=window_spawned,
+                    extended_window=window_extended,
+                    recovered_window=window_recovered,
+                    arrived_window=window_arrived,
+                )
+                window_spawned = 0
+                window_extended = 0
+                window_recovered = 0
+                window_arrived = 0
+                while next_metrics_time <= sim_time + 1e-9:
+                    next_metrics_time += metrics_interval
+            else:
+                last_info = cheap_info
+
+            if sim_time + 1e-9 >= next_print_time:
                 print(
                     f'[all-model seed {seed}] step={step:6d}, '
-                    f't={float(info.get("sim_time", 0.0)):8.1f}, '
-                    f'active={int(info.get("active_vehicles", 0)):4d}, '
-                    f'gq={float(info.get("global_queue", 0.0)):7.1f}, '
-                    f'gw={float(info.get("global_wait", 0.0)):9.1f}, '
-                    f'arrived={int(info.get("total_arrived", 0)):5d}'
+                    f't={sim_time:8.1f}, '
+                    f'active={int(last_info.get("active_vehicles", 0)):4d}, '
+                    f'gq={float(last_info.get("global_queue", 0.0)):7.1f}, '
+                    f'gw={float(last_info.get("global_wait", 0.0)):9.1f}, '
+                    f'arrived={int(last_info.get("total_arrived", 0)):5d}'
                 )
+                while next_print_time <= sim_time + 1e-9:
+                    next_print_time += print_interval
 
-            if float(info.get('sim_time', 0.0)) >= float(args.episode_seconds):
+            if sim_time >= float(args.episode_seconds):
                 break
     finally:
-        env.close()
+        episode.close()
         norm_env.close()
 
     return summarize_samples('all_model', seed, samples)
 
+
 def run_fixed_cycle_episode(args: argparse.Namespace, scenario: TrafficScenario, seed: int) -> dict[str, float | int | str]:
-    env = ExactSimulationTrafficSignalEnv(
-        tls_id=args.tls_id,
-        episode_seconds=args.episode_seconds,
+    """Run the fixed-cycle baseline with no target/anchor TLS.
+
+    Metric collection uses the same simulated-time schedule as all-model mode.
+    This avoids the old unfair comparison where fixed-cycle produced about 73
+    samples and all-model produced about 361 samples for a 3600s / 10s run.
+    """
+    episode = AnchorlessSimulationEpisode(
+        scenario=scenario,
+        seed=seed,
+        args=args,
         gui=bool(args.gui),
-        randomize_scenarios=False,
-        base_seed=seed,
         env_rank=0,
-        print_scenarios=args.print_scenarios,
-        fixed_scenario=scenario,
-        max_vehicle_center=args.max_vehicle_center,
-        target_center=args.target_vehicle_center,
-        initial_center=args.initial_vehicle_center,
-        spawn_batch_center=args.spawn_batch_center,
-        green_duration_center=args.green_duration_center,
-        density_spread=args.density_spread,
-        initial_spread=args.initial_spread,
     )
 
     samples: list[dict[str, float]] = []
     try:
-        _obs, _info = env.reset(seed=seed)
+        episode.reset()
         decision_steps = max(1, int(round(sim.DECISION_INTERVAL / sim.STEP_LENGTH)))
+        metrics_interval = max(float(sim.STEP_LENGTH), float(getattr(args, 'metrics_interval', 10.0)))
+        print_interval = max(float(sim.STEP_LENGTH), float(getattr(args, 'eval_print_every', 20)))
+
+        print(
+            f'[fixed seed {seed}] FAST anchorless fixed-cycle control of '
+            f'{sum(1 for c in episode.controllers if not c.get("disabled"))} traffic lights '
+            f'(metrics every {metrics_interval:g} sim seconds)'
+        )
+
+        last_info: dict[str, Any] = _collect_equal_time_metric_sample(
+            samples=samples,
+            episode=episode,
+            spawned_window=0,
+            extended_window=0,
+            recovered_window=0,
+            arrived_window=0,
+        )
+        next_metrics_time = metrics_interval
+        next_print_time = print_interval
+        window_spawned = 0
+        window_extended = 0
+        window_recovered = 0
+        window_arrived = 0
 
         for step in range(1, args.eval_steps + 1):
-            # This is the no-model baseline: every traffic light, including the
-            # target TLS, follows the same fixed-cycle rule from the simulation.
-            for controller in env.controllers:
+            for controller in episode.controllers:
                 if (
                     not controller.get('disabled')
                     and controller['mode'] == 'green'
@@ -1580,52 +1885,70 @@ def run_fixed_cycle_episode(args: argparse.Namespace, scenario: TrafficScenario,
 
             arrived, spawned, extended, recovered = sim.run_simulation_steps(
                 num_steps=decision_steps,
-                controllers=env.controllers,
-                start_edges=env.main_start_edges,
-                turn_index=env.turn_index,
-                raw_graph=env.raw_graph,
-                edge_metadata=env.edge_metadata,
-                core_edges=env.core_edges,
-                rng=env.rng,
-                turn_counts=env.turn_counts,
-                sim_state=env.sim_state,
-                args=env.args,
+                controllers=episode.controllers,
+                start_edges=episode.main_start_edges,
+                turn_index=episode.turn_index,
+                raw_graph=episode.raw_graph,
+                edge_metadata=episode.edge_metadata,
+                core_edges=episode.core_edges,
+                rng=episode.rng,
+                turn_counts=episode.turn_counts,
+                sim_state=episode.sim_state,
+                args=episode.args,
             )
-            env.total_arrived += arrived
+            episode.total_arrived += arrived
+            window_arrived += int(arrived)
+            window_spawned += int(spawned)
+            window_extended += int(extended)
+            window_recovered += int(recovered)
 
-            assert env.controller is not None
-            target_wait, target_queue = target_wait_and_queue(env.controller)
-            global_wait, global_queue, avg_speed = network_wait_queue_speed()
-            info = env._info(
-                spawned=spawned,
-                extended=extended,
-                recovered=recovered,
-                arrived=arrived,
-                target_wait=target_wait,
-                target_queue=target_queue,
-                global_wait=global_wait,
-                global_queue=global_queue,
-                avg_speed=avg_speed,
+            cheap_info = episode.info(
+                spawned=window_spawned,
+                extended=window_extended,
+                recovered=window_recovered,
+                arrived=window_arrived,
+                global_wait=float(last_info.get('global_wait', 0.0) or 0.0),
+                global_queue=float(last_info.get('global_queue', 0.0) or 0.0),
+                avg_speed=float(last_info.get('avg_speed', 0.0) or 0.0),
             )
-            collect_sample(samples, info, reward=0.0)
+            sim_time = float(cheap_info.get('sim_time', 0.0) or 0.0)
 
-            if step % args.eval_print_every == 0:
+            if sim_time + 1e-9 >= next_metrics_time or sim_time >= float(args.episode_seconds):
+                last_info = _collect_equal_time_metric_sample(
+                    samples=samples,
+                    episode=episode,
+                    spawned_window=window_spawned,
+                    extended_window=window_extended,
+                    recovered_window=window_recovered,
+                    arrived_window=window_arrived,
+                )
+                window_spawned = 0
+                window_extended = 0
+                window_recovered = 0
+                window_arrived = 0
+                while next_metrics_time <= sim_time + 1e-9:
+                    next_metrics_time += metrics_interval
+            else:
+                last_info = cheap_info
+
+            if sim_time + 1e-9 >= next_print_time:
                 print(
                     f'[fixed seed {seed}] step={step:6d}, '
-                    f't={float(info.get("sim_time", 0.0)):8.1f}, '
-                    f'active={int(info.get("active_vehicles", 0)):4d}, '
-                    f'gq={float(info.get("global_queue", 0.0)):7.1f}, '
-                    f'gw={float(info.get("global_wait", 0.0)):9.1f}, '
-                    f'arrived={int(info.get("total_arrived", 0)):5d}'
+                    f't={sim_time:8.1f}, '
+                    f'active={int(last_info.get("active_vehicles", 0)):4d}, '
+                    f'gq={float(last_info.get("global_queue", 0.0)):7.1f}, '
+                    f'gw={float(last_info.get("global_wait", 0.0)):9.1f}, '
+                    f'arrived={int(last_info.get("total_arrived", 0)):5d}'
                 )
+                while next_print_time <= sim_time + 1e-9:
+                    next_print_time += print_interval
 
-            if float(info.get('sim_time', 0.0)) >= float(args.episode_seconds):
+            if sim_time >= float(args.episode_seconds):
                 break
     finally:
-        env.close()
+        episode.close()
 
     return summarize_samples('fixed_cycle', seed, samples)
-
 
 def aggregate_by_controller(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     controllers = sorted(set(str(row['controller']) for row in rows))
@@ -1726,10 +2049,15 @@ def compare_model_to_fixed_cycle(args: argparse.Namespace) -> None:
         scenario = build_fixed_scenario(seed=seed, args=args)
 
         # Always use the exact same scenario object for all controller modes.
+        # Fixed-cycle and all-model modes are anchorless.  Single-model mode
+        # requires an explicit --tls-id and is skipped otherwise.
         if not args.skip_fixed:
             all_rows.append(run_fixed_cycle_episode(args, scenario, seed))
         if not args.skip_single_model:
-            all_rows.append(run_model_episode(args, scenario, seed))
+            if args.tls_id is None:
+                print('[single-model] skipped: no --tls-id was provided; no anchor TLS is auto-picked.')
+            else:
+                all_rows.append(run_model_episode(args, scenario, seed))
         if not args.skip_all_model:
             all_rows.append(run_all_model_episode(args, scenario, seed))
 
@@ -1738,12 +2066,12 @@ def compare_model_to_fixed_cycle(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Compare fixed-cycle, one-TLS RL, and copied all-TLS RL control in the realistic SUMO simulation.'
+        description='Compare anchorless fixed-cycle/all-TLS RL control in the realistic SUMO simulation. Single-TLS mode requires explicit --tls-id.'
     )
     parser.add_argument('--episode-seconds', type=int, default=3600)
     parser.add_argument('--eval-steps', type=int, default=10_000)
     parser.add_argument('--eval-print-every', type=int, default=20)
-    parser.add_argument('--tls-id', default=TARGET_TLS_ID)
+    parser.add_argument('--tls-id', default=None, help='Optional explicit TLS ID for single-model mode only. Not used by fixed/all-model modes.')
     parser.add_argument('--model-path', default=MODEL_DEFAULT)
     parser.add_argument('--vecnormalize-path', default=None)
     parser.add_argument('--seed', type=int, default=42)
@@ -1755,6 +2083,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--skip-single-model', action='store_true')
     parser.add_argument('--skip-all-model', action='store_true')
     parser.add_argument('--gui', action='store_true', help='Use SUMO GUI. For statistics, headless mode is much faster.')
+    parser.add_argument('--model-update-period', type=float, default=10.0,
+                        help='Seconds between policy updates for each traffic light in all-model mode. Larger is faster.')
+    parser.add_argument('--metrics-interval', type=float, default=10.0,
+                        help='Seconds between expensive global metric scans. Larger is faster.')
     parser.add_argument('--print-scenarios', action='store_true')
     parser.add_argument('--device', default='auto')
 
@@ -1775,8 +2107,13 @@ def main() -> None:
     args.target_vehicle_center = min(int(args.target_vehicle_center), args.max_vehicle_center)
     args.initial_vehicle_center = min(int(args.initial_vehicle_center), args.target_vehicle_center)
     args.spawn_batch_center = max(1, int(args.spawn_batch_center))
+    args.model_update_period = max(float(sim.STEP_LENGTH), float(getattr(args, 'model_update_period', 10.0)))
+    args.metrics_interval = max(float(sim.STEP_LENGTH), float(getattr(args, 'metrics_interval', 10.0)))
     args.density_spread = min(0.60, max(0.0, float(args.density_spread)))
     args.initial_spread = min(1.50, max(0.0, float(args.initial_spread)))
+
+    if args.tls_id is None and not args.skip_single_model:
+        print('No --tls-id provided; single-model mode will be skipped. Fixed/all-model modes are anchorless.')
 
     random.seed(args.seed)
     np.random.seed(args.seed)

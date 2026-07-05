@@ -101,8 +101,13 @@ if not os.path.exists(SUMO_GUI_BINARY):
 if not os.path.exists(SUMO_HEADLESS_BINARY):
     SUMO_HEADLESS_BINARY = "sumo"
 
-NET_FILE = os.path.join(BASE_DIR, "new_map.net.xml")
+NET_FILE = os.path.join(BASE_DIR, "santa_clara.net.xml")
 ROUTE_FILE = os.path.join(BASE_DIR, "random_drive_dynamic_turns.rou.xml")
+
+# Print timing details for this specific intersection when controllers are built.
+# This is diagnostic only; it does not change signal behavior.
+PHASE_LENGTH_DEBUG_TLS_ID = "cluster_282813104_282813137_5041442783_5041442784"
+PRINT_PHASE_LENGTH_DEBUG = True
 
 
 # ============================================================
@@ -122,8 +127,8 @@ QUEUE_SPEED_THRESHOLD = 0.1
 MAX_ACTIVE_VEHICLE_CAP = 3750
 DEFAULT_SIM_END = 1_000_000_000.0
 
-CAR_LENGTH = 4.8
-CAR_WIDTH = 1.8
+CAR_LENGTH = 4.08
+CAR_WIDTH = 1.53
 CAR_MIN_GAP = 2.5
 
 # Ambulance / emergency-vehicle helper.
@@ -152,13 +157,13 @@ MOVEMENT_ORDER = ["S", "R", "L"]
 # Runtime lane preference helper. This does not change signal timing or routing.
 # It only nudges straight-moving vehicles out of shared right/straight lanes
 # when a dedicated straight lane exists on the same incoming edge.
-TURN_LANE_CHANGE_DURATION = 12.0
+TURN_LANE_CHANGE_DURATION = 18.0
 # Do not request lane changes when cars are already queued near the stop line.
 # Late forced lane changes are one common cause of the two-sided jams shown in SUMO.
 LANE_PREF_MIN_DISTANCE_TO_END = 25.0
 LANE_PREF_MIN_SPEED = 0.2
 LANE_PREF_MAX_WAITING_TIME = 10.0
-LANE_PREF_INTERVAL = 1.0
+LANE_PREF_INTERVAL = 4.0
 TURN_LANE_PREFERENCE_INDEX = {}
 
 # Mid-road lane-balancing helper.
@@ -168,7 +173,7 @@ TURN_LANE_PREFERENCE_INDEX = {}
 # lane to a nearby underused lane, but only when the target lane can still serve
 # the vehicle's next routed edge and the vehicle is far enough from the next
 # junction. This avoids unsafe last-second lane changes.
-LANE_BALANCE_INTERVAL = 2.0
+LANE_BALANCE_INTERVAL = 10.0
 LANE_BALANCE_CHANGE_DURATION = 8.0
 LANE_BALANCE_MIN_EDGE_LANES = 2
 LANE_BALANCE_MIN_DISTANCE_FROM_START = 30.0
@@ -186,14 +191,70 @@ LANE_BALANCE_LAST_CHANGE = {}
 # lane-change model is allowed to move them into another lane. This prevents
 # last-second turn-lane changes right before intersections. Signalized
 # approaches are included and may use an equal-or-larger lock distance.
-INTERSECTION_NO_LANE_CHANGE_DISTANCE = 100.0
-INTERSECTION_LANE_PREP_DISTANCE = 320.0
-TRAFFIC_LIGHT_NO_LANE_CHANGE_DISTANCE = 100.0
-TRAFFIC_LIGHT_LANE_PREP_DISTANCE = 320.0
+INTERSECTION_NO_LANE_CHANGE_DISTANCE = 75.0
+INTERSECTION_LANE_PREP_DISTANCE = 550.0
+TRAFFIC_LIGHT_NO_LANE_CHANGE_DISTANCE = 90.0
+TRAFFIC_LIGHT_LANE_PREP_DISTANCE = 650.0
 TRAFFIC_LIGHT_LOCKED_LANE_CHANGE_MODE = 0
 TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE = 1621
 TRAFFIC_LIGHT_APPROACH_LANES = set()
 TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES = set()
+# Route-lane commitment helper. Once a vehicle reaches a lane that matches
+# its routed next movement, keep it there through the final approach.
+ROUTE_LANE_COMMITMENT_HOLD_DISTANCE = 280.0
+ROUTE_LANE_COMMITTED_VEHICLES = set()
+ROUTE_LANE_COMMITTED_EDGE = {}
+
+# Emergency route/lane fallback.  Cars still try to get into the correct lane
+# early, but if a vehicle reaches the junction in a lane that physically cannot
+# reach its planned next edge, it is rerouted to a legal outgoing edge from its
+# current lane instead of freezing at the stop line.
+EMERGENCY_ROUTE_REROUTE_DISTANCE = 135.0
+EMERGENCY_ROUTE_REROUTE_STOPPED_TIME = 4.0
+EMERGENCY_ROUTE_REROUTE_SPEED = 0.35
+EMERGENCY_ROUTE_REROUTE_COOLDOWN = 10.0
+EMERGENCY_ROUTE_REROUTE_LAST = {}
+
+# OD movement balancing.  OD fastest-routing is kept, but candidate routes are
+# softly rejected when they would make one intersection approach degenerate into
+# nearly all-left-turn or all-right-turn traffic even though other legal
+# movements exist.  After many failed attempts, the route is accepted to avoid
+# spawn starvation on unusual maps.
+OD_EDGE_MOVEMENT_BALANCE_MIN_SAMPLES = 8
+OD_EDGE_MOVEMENT_BALANCE_MAX_LEFT_SHARE = 0.35
+OD_EDGE_MOVEMENT_BALANCE_MAX_RIGHT_SHARE = 0.45
+OD_EDGE_MOVEMENT_BALANCE_RELAX_FRACTION = 0.70
+
+
+# Strong active approach/successor balancing.
+# Destination-zone balancing prevents one red-dot hotspot, but it does not
+# guarantee that a specific intersection approach will receive a reasonable
+# mix of exits.  These rules reject a candidate OD route if it would make any
+# currently-active approach become dominated by one outgoing edge or one turn
+# movement.  This is deliberately based on ACTIVE vehicles, not only cumulative
+# history, so the distribution can recover while the simulation is running.
+OD_ACTIVE_APPROACH_BALANCE = False
+OD_ACTIVE_APPROACH_MIN_SAMPLES = 12
+OD_ACTIVE_APPROACH_MAX_SUCCESSOR_SHARE = 0.95
+OD_ACTIVE_APPROACH_MAX_LEFT_SHARE = 0.95
+OD_ACTIVE_APPROACH_MAX_RIGHT_SHARE = 0.95
+OD_ACTIVE_APPROACH_MAX_STRAIGHT_SHARE = 0.95
+OD_ACTIVE_APPROACH_RELAX_FRACTION = 0.70
+OD_ACTIVE_APPROACH_HOTSPOT_PRINT_INTERVAL = 60.0
+OD_ACTIVE_APPROACH_HOTSPOT_MIN_SAMPLES = 8
+OD_ACTIVE_APPROACH_HOTSPOT_SHARE = 0.65
+OD_ACTIVE_APPROACH_MAX_HOTSPOTS_TO_PRINT = 8
+OD_BALANCE_CLEANUP_INTERVAL = 10.0
+SPAWN_DESTINATION_MARKER_UPDATE_INTERVAL = 5.0
+
+# Fast-runtime throttle knobs. These reduce repeated Python <-> TraCI scans.
+# SUMO still advances every STEP_LENGTH, but expensive custom helpers run less often.
+FAST_RUNTIME_MODE = True
+FAST_POPULATION_FILL_INTERVAL = 2.0
+FAST_ROUTE_SERVICE_INTERVAL = 5.0
+FAST_LANE_LOCK_INTERVAL = 4.0
+FAST_KEEP_CLEAR_INTERVAL = 3.0
+FAST_TURN_MONITOR_INTERVAL = 10.0
 
 
 # Origin-destination routing helper.
@@ -210,15 +271,77 @@ OD_BOUNDARY_MARGIN_FRACTION = 0.13
 OD_MIN_EUCLIDEAN_DISTANCE = 900.0
 OD_MIN_ROUTE_DISTANCE = 1200.0
 OD_MIN_ZONE_SEPARATION = 2
-OD_ROUTE_ATTEMPTS = 120
+OD_ROUTE_ATTEMPTS = 8
 OD_MAX_LOCAL_MIDDLE_FRACTION = 0.35
 OD_LOCAL_MIDDLE_TRIM_EDGES = 2
 OD_THROUGH_TRIP_PROBABILITY = 0.72
 OD_ACCESS_TRIP_PROBABILITY = 0.23
 OD_LONG_LOCAL_TRIP_PROBABILITY = 0.05
-OD_RANDOM_WALK_FALLBACK = True
+OD_RANDOM_WALK_FALLBACK = False
 OD_MIN_EDGE_LENGTH = 20.0
-OD_DEPART_LANE = "free"
+OD_DEPART_LANE = "best"
+
+# Boundary-aware OD demand shaping.
+# In a finite OSM crop, some boundary approaches have missing straight/right
+# continuations because the real road continues outside the downloaded map.
+# If OD demand repeatedly routes through those clipped approaches, SUMO can make
+# almost every vehicle turn left simply because that is the only in-map path.
+# These filters reject OD routes that would create unrealistic left-turn
+# dominance while still allowing left turns when they are genuinely part of a
+# reasonable route.
+OD_ROUTE_MIN_MOVEMENTS_FOR_LEFT_FILTER = 4
+OD_ROUTE_MAX_LEFT_SHARE = 0.38
+OD_APPROACH_LEFT_BIAS_MIN_SAMPLES = 5
+OD_APPROACH_MAX_LEFT_SHARE = 0.48
+OD_LEFT_BIAS_RELAX_AFTER_ATTEMPTS_FRACTION = 0.70
+OD_DESTINATION_ZONE_BALANCE = True
+# Strict local-endpoint demand mode.  Normal passenger cars must start
+# on local/neighborhood roads and must have their final destination
+# on local/neighborhood roads.  They may still travel through main/
+# connector roads in the middle of the route.
+OD_LOCAL_ENDPOINTS_ONLY = True
+OD_LOCAL_ENDPOINTS_DISABLE_RANDOM_WALK_FALLBACK = True
+# Active destination-zone balancing.  This is stronger than simple round-robin
+# zone cycling: it tracks where currently active cars are trying to end up and
+# heavily downweights destination zones that are already overrepresented.
+OD_ACTIVE_DESTINATION_ZONE_BALANCE = True
+OD_DESTINATION_ZONE_BALANCE_POWER = 2.2
+OD_DESTINATION_OD_PAIR_BALANCE_POWER = 1.1
+OD_DESTINATION_ZONE_HOTSPOT_SHARE = 0.12
+OD_DESTINATION_ZONE_HOTSPOT_MULTIPLIER = 0.08
+OD_DESTINATION_ZONE_EDGE_WEIGHT_POWER = 0.35
+OD_DESTINATION_ZONE_HISTOGRAM_PRINT_INTERVAL = 60.0
+
+# GUI zone overlay.  When GUI mode is enabled, the OD destination zones are
+# drawn as translucent colored rectangles with thick boundary lines on top of
+# the SUMO map. These are visual debugging markers only; they do not affect
+# routing or traffic control.
+OD_ZONE_GRID_LINES_ENABLED = False
+OD_ZONE_COLOR_FILL_ENABLED = False
+OD_ZONE_GRID_LINE_THICKNESS = 8.0
+OD_ZONE_GRID_LINE_COLOR = (0, 35, 255, 135)
+OD_ZONE_GRID_BORDER_COLOR = (0, 0, 180, 170)
+OD_ZONE_GRID_LINE_LAYER = -45
+OD_ZONE_FILL_LAYER = -50
+OD_ZONE_FILL_ALPHA = 24
+OD_ZONE_FILL_COLORS = (
+    (255, 80, 80),
+    (255, 170, 60),
+    (255, 235, 70),
+    (70, 210, 90),
+    (60, 210, 220),
+    (80, 130, 255),
+    (185, 95, 255),
+    (255, 100, 205),
+)
+_OD_ZONE_GRID_POLYGON_IDS = set()
+
+# Recovery reroutes should prefer clearing the junction straight/right when
+# possible. This prevents emergency route repair from creating extra left-turn
+# bias on clipped map edges.
+RECOVERY_STRAIGHT_WEIGHT_MULTIPLIER = 2.25
+RECOVERY_RIGHT_WEIGHT_MULTIPLIER = 1.35
+RECOVERY_LEFT_WEIGHT_MULTIPLIER = 0.35
 
 # Near-intersection movement decision helper.
 # Vehicles make their S/R/L choice as they approach an intersection, then the
@@ -228,11 +351,22 @@ OD_DEPART_LANE = "free"
 APPROACH_DECISION_INDEX = {}
 APPROACH_TURN_DECISIONS = {}
 APPROACH_TURN_COUNTS = Counter()
+# Per-approach turn-balancing state.  The global counter alone can still let one
+# bad intersection approach become almost all-left if other approaches elsewhere
+# happen to balance the global totals.  This counter makes every incoming edge
+# try to maintain the requested S/R/L split among its own approaching vehicles.
+APPROACH_TURN_COUNTS_BY_EDGE = defaultdict(Counter)
+# This is the real "lock in" fix: even OD fastest-route vehicles get a final
+# local movement decision before an intersection.  That means the simulation no
+# longer passively accepts a shortest-path bottleneck where every car turns the
+# same way.  If an approach has legal straight/right alternatives, cars are
+# redistributed at the approach itself, not only by choosing different endpoints.
+OD_APPROACH_TURN_CONTROL_ENABLED = False  # FAST MODE: do not live-reroute every car every step
 APPROACH_DECISION_MIN_DISTANCE_TO_END = 35.0
 APPROACH_DECISION_MAX_DISTANCE_TO_END = 180.0
-APPROACH_LANE_CHANGE_BASE_DISTANCE = 22.0
-APPROACH_LANE_CHANGE_DISTANCE_PER_LANE = 32.0
-APPROACH_LANE_CHANGE_DURATION = 16.0
+APPROACH_LANE_CHANGE_BASE_DISTANCE = 35.0
+APPROACH_LANE_CHANGE_DISTANCE_PER_LANE = 55.0
+APPROACH_LANE_CHANGE_DURATION = 20.0
 APPROACH_DECISION_PRUNE_LIMIT = 10000
 
 # Universal keep-clear / right-of-way safety gate.
@@ -268,7 +402,7 @@ STUCK_RELEASE_SPEED = 0.05
 # watchdog releases stale speed/lane-change overrides and repairs routes for
 # vehicles that are stopped on free road segments for no valid reason.
 UNJUSTIFIED_STOP_WATCHDOG_ENABLED = True
-UNJUSTIFIED_STOP_CHECK_INTERVAL = 1.0
+UNJUSTIFIED_STOP_CHECK_INTERVAL = 6.0
 UNJUSTIFIED_STOP_SPEED = 0.20
 UNJUSTIFIED_STOP_MIN_TIME = 3.0
 UNJUSTIFIED_STOP_ACTION_COOLDOWN = 6.0
@@ -334,7 +468,7 @@ HARDCODED_NO_CRUISE_LOOP_EDGES = {
 # Example in this map: lane 417292872_0 cannot continue to edge 518175685;
 # only lanes 417292872_1 and 417292872_2 can. Without this rescue, vehicles
 # can stop forever at the end of that lane.
-UNCONNECTED_LANE_RESCUE_INTERVAL = 1.0
+UNCONNECTED_LANE_RESCUE_INTERVAL = 4.0
 UNCONNECTED_LANE_RESCUE_DURATION = 12.0
 UNCONNECTED_LANE_RESCUE_LOOKAHEAD = 240.0
 KNOWN_UNCONNECTED_TRAP_LANES = {
@@ -720,12 +854,68 @@ def cleanup_traffic_light_lane_change_locks(active_ids):
             TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES.discard(veh_id)
 
 
-def apply_traffic_light_lane_change_lock_to_vehicle(veh_id):
-    """Disable autonomous lane changes close to intersections.
+def route_lane_prep_distance_for_lane(lane_id):
+    """Distance upstream where vehicles start committing to route-compatible lanes."""
+    if not lane_id or lane_id.startswith(":"):
+        return 0.0
 
-    This is separate from the script's explicit changeLane() guards. Without
-    this, SUMO's internal lane-change model can still decide to merge at the
-    last moment even when our own helpers stop requesting lane changes.
+    edge_id = lane_to_edge(lane_id)
+    if edge_id is None or edge_id.startswith(":"):
+        return 0.0
+
+    distance = INTERSECTION_LANE_PREP_DISTANCE
+    if lane_id in TRAFFIC_LIGHT_APPROACH_LANES:
+        distance = max(distance, TRAFFIC_LIGHT_LANE_PREP_DISTANCE)
+
+    return max(traffic_light_no_lane_change_distance_for_lane(lane_id), distance)
+
+
+def cleanup_route_lane_commitment_locks(active_ids):
+    """Remove stale per-vehicle lane-commitment locks after cars leave SUMO."""
+    active_ids = set(active_ids)
+    for veh_id in list(ROUTE_LANE_COMMITTED_VEHICLES):
+        if veh_id not in active_ids:
+            ROUTE_LANE_COMMITTED_VEHICLES.discard(veh_id)
+            ROUTE_LANE_COMMITTED_EDGE.pop(veh_id, None)
+            EMERGENCY_ROUTE_REROUTE_LAST.pop(veh_id, None)
+
+
+def release_route_lane_commitment(veh_id):
+    """Release a route-lane lock unless the vehicle is also in the hard no-change zone."""
+    if veh_id in ROUTE_LANE_COMMITTED_VEHICLES:
+        try:
+            if veh_id not in TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES:
+                traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE)
+        except traci.TraCIException:
+            pass
+    ROUTE_LANE_COMMITTED_VEHICLES.discard(veh_id)
+    ROUTE_LANE_COMMITTED_EDGE.pop(veh_id, None)
+
+
+def set_route_lane_commitment_lock(veh_id, current_edge):
+    """Mark a vehicle as route-lane committed without hard-locking it forever.
+
+    The earlier strict patch used laneChangeMode=0.  That kept cars disciplined,
+    but it also let boxed-in vehicles freeze near signals.  We still remember
+    that the car is committed to this edge/lane choice, but we leave normal SUMO
+    lane changing available so the later rescue/watchdog code can recover.
+    """
+    try:
+        traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE)
+        ROUTE_LANE_COMMITTED_VEHICLES.add(veh_id)
+        ROUTE_LANE_COMMITTED_EDGE[veh_id] = current_edge
+        return True
+    except traci.TraCIException:
+        ROUTE_LANE_COMMITTED_VEHICLES.discard(veh_id)
+        ROUTE_LANE_COMMITTED_EDGE.pop(veh_id, None)
+        return False
+
+def apply_traffic_light_lane_change_lock_to_vehicle(veh_id):
+    """Disable last-second lane changes only when the current lane is route-compatible.
+
+    If the current lane cannot reach the vehicle's planned next edge, locking
+    lane changes would trap the car.  In that case, release stale holds/locks and
+    let the unconnected-lane rescue or unjustified-stop watchdog reroute it.
     """
     try:
         lane_id = traci.vehicle.getLaneID(veh_id)
@@ -738,6 +928,7 @@ def apply_traffic_light_lane_change_lock_to_vehicle(veh_id):
 
         lane_pos = traci.vehicle.getLanePosition(veh_id)
         lane_len = cached_lane_length(lane_id)
+        current_edge = lane_to_edge(lane_id)
     except traci.TraCIException:
         TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES.discard(veh_id)
         return False
@@ -745,6 +936,19 @@ def apply_traffic_light_lane_change_lock_to_vehicle(veh_id):
     distance_to_end = lane_len - lane_pos
 
     if inside_traffic_light_no_lane_change_zone(lane_id, distance_to_end):
+        next_edge = planned_next_edge_from_route(veh_id, current_edge) if current_edge else None
+        if next_edge is not None and not next_edge.startswith(":") and not lane_has_connection_to_edge(lane_id, next_edge):
+            # Wrong lane at the end: do NOT lock it.  This vehicle needs the
+            # recovery path, not stricter lane discipline.
+            try:
+                traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE)
+            except traci.TraCIException:
+                pass
+            TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES.discard(veh_id)
+            release_route_lane_commitment(veh_id)
+            release_keep_clear_vehicle(veh_id)
+            return False
+
         try:
             traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_LOCKED_LANE_CHANGE_MODE)
             TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES.add(veh_id)
@@ -760,7 +964,6 @@ def apply_traffic_light_lane_change_lock_to_vehicle(veh_id):
         TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES.discard(veh_id)
 
     return False
-
 
 def apply_traffic_light_lane_change_lock_to_all_vehicles():
     active_ids = list(traci.vehicle.getIDList())
@@ -1009,6 +1212,307 @@ def choose_best_rescue_lane(candidate_lanes, current_lane_index):
     return scored[0][3], scored[0][4]
 
 
+
+def movement_for_lane_to_edge(current_lane, outgoing_edge):
+    """Classify the movement from one exact lane to one outgoing edge."""
+    for link in get_lane_links(current_lane):
+        if not link:
+            continue
+        to_lane = link[0]
+        if lane_to_edge(to_lane) != outgoing_edge:
+            continue
+        movement = None
+        if len(link) > 6:
+            movement = sumo_link_direction_to_movement(link[6])
+        if movement is None:
+            _, movement = classify_movement_by_geometry(current_lane, to_lane)
+        if movement in TURN_PROBABILITIES:
+            return movement
+    return None
+
+
+def should_emergency_reroute_lane_block(
+    lane_id,
+    next_edge,
+    distance_to_end,
+    speed,
+    waiting_time,
+    no_change_buffer=0.0,
+    required_distance=0.0,
+):
+    """Return True when the car has genuinely failed to reach a compatible lane."""
+    if not lane_id or not next_edge or lane_has_connection_to_edge(lane_id, next_edge):
+        return False
+
+    if distance_to_end <= max(EMERGENCY_ROUTE_REROUTE_DISTANCE, no_change_buffer + required_distance):
+        return True
+
+    if speed <= EMERGENCY_ROUTE_REROUTE_SPEED and waiting_time >= EMERGENCY_ROUTE_REROUTE_STOPPED_TIME:
+        return True
+
+    return False
+
+
+def destination_from_current_route(veh_id, current_edge):
+    try:
+        route = list(traci.vehicle.getRoute(veh_id))
+        route_index = traci.vehicle.getRouteIndex(veh_id)
+    except traci.TraCIException:
+        return None
+
+    if not route:
+        return None
+
+    if route_index < 0 or route_index >= len(route):
+        try:
+            route_index = route.index(current_edge)
+        except ValueError:
+            route_index = 0
+
+    for edge_id in reversed(route[route_index:]):
+        if edge_id and not edge_id.startswith(":") and edge_id != current_edge:
+            return edge_id
+    return None
+
+
+def clean_route_edges(route_edges):
+    cleaned = []
+    for edge_id in route_edges:
+        if not edge_id or edge_id.startswith(":"):
+            continue
+        if cleaned and cleaned[-1] == edge_id:
+            continue
+        cleaned.append(edge_id)
+    return cleaned
+
+
+def set_vehicle_route_and_release_controls(veh_id, route_edges):
+    cleaned = clean_route_edges(route_edges)
+    if len(cleaned) < 2:
+        return False
+    try:
+        release_keep_clear_vehicle(veh_id)
+        safe_vehicle_set_speed(veh_id, -1)
+        traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE)
+        traci.vehicle.setRoute(veh_id, cleaned)
+        TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES.discard(veh_id)
+        ROUTE_LANE_COMMITTED_VEHICLES.discard(veh_id)
+        ROUTE_LANE_COMMITTED_EDGE.pop(veh_id, None)
+        return True
+    except traci.TraCIException:
+        return False
+
+
+def build_destination_preserving_route(current_edge, reachable_edge, destination):
+    """Try current -> reachable -> original destination, falling back locally."""
+    if destination and destination != reachable_edge:
+        try:
+            suffix_path = fastest_sumo_route(reachable_edge, destination)
+            suffix_edges = list(getattr(suffix_path, "edges", []) or [])
+            if suffix_edges and suffix_edges[0] == reachable_edge:
+                candidate = [current_edge] + suffix_edges
+                if len(clean_route_edges(candidate)) >= 2:
+                    return candidate
+        except traci.TraCIException:
+            pass
+
+    return [current_edge, reachable_edge]
+
+
+def choose_reachable_edge_for_emergency(current_lane, current_edge, blocked_next_edge, preferred_movement=None):
+    """Choose a legal outgoing edge without creating a left-turn bias."""
+    outgoing_edges = [
+        edge for edge in lane_outgoing_edges(current_lane)
+        if edge and edge != current_edge and edge not in HARDCODED_NO_CRUISE_LOOP_EDGES
+    ]
+    if not outgoing_edges:
+        return None
+
+    scored = []
+    for edge in outgoing_edges:
+        movement = movement_for_lane_to_edge(current_lane, edge)
+        base = TURN_PROBABILITIES.get(movement, 0.05)
+
+        # Emergency reroutes should get the car out of the blocked lane without
+        # causing every blocked vehicle to take the left-turn option. Prefer
+        # straight if legal, then right, then left.
+        if movement == "S":
+            base *= 5.0
+        elif movement == "R":
+            base *= 2.0
+        elif movement == "L":
+            base *= 0.75
+
+        if preferred_movement is not None and movement == preferred_movement:
+            base *= 1.5
+
+        if edge == blocked_next_edge:
+            base *= 0.1
+
+        scored.append((base, movement or "", edge))
+
+    scored.sort(reverse=True)
+    return scored[0][2]
+
+
+def emergency_reroute_vehicle_from_blocked_lane(
+    veh_id,
+    current_edge,
+    current_lane,
+    blocked_next_edge,
+    preferred_movement=None,
+):
+    """Last-resort fix for a vehicle that cannot make its planned movement.
+
+    The vehicle first tries to use the correct lane upstream.  This helper only
+    runs after that failed or after the vehicle is already too close/stopped.
+    It reroutes to an outgoing edge that the current lane can physically take,
+    and tries to preserve the old final destination when possible.
+    """
+    if is_ambulance(veh_id):
+        return False
+
+    now = current_sim_time()
+    if now - EMERGENCY_ROUTE_REROUTE_LAST.get(veh_id, -1e9) < EMERGENCY_ROUTE_REROUTE_COOLDOWN:
+        return False
+
+    reachable_edge = choose_reachable_edge_for_emergency(
+        current_lane=current_lane,
+        current_edge=current_edge,
+        blocked_next_edge=blocked_next_edge,
+        preferred_movement=preferred_movement,
+    )
+    if reachable_edge is None:
+        return False
+
+    destination = destination_from_current_route(veh_id, current_edge)
+    new_route = build_destination_preserving_route(current_edge, reachable_edge, destination)
+
+    if set_vehicle_route_and_release_controls(veh_id, new_route):
+        EMERGENCY_ROUTE_REROUTE_LAST[veh_id] = now
+        APPROACH_TURN_DECISIONS.pop((veh_id, current_edge), None)
+        return True
+
+    return False
+
+
+def available_movement_groups_from_edge(edge_id, raw_graph):
+    groups = set()
+    for successor in raw_graph.get(edge_id, []):
+        movement = classify_edge_successor_movement(edge_id, successor)
+        if movement in TURN_PROBABILITIES:
+            groups.add(movement)
+    return groups
+
+
+def route_movement_events(route_edges, raw_graph=None):
+    for current_edge, next_edge in zip(route_edges, route_edges[1:]):
+        if not current_edge or not next_edge:
+            continue
+        if current_edge.startswith(":") or next_edge.startswith(":"):
+            continue
+        movement = classify_edge_successor_movement(current_edge, next_edge)
+        if movement in TURN_PROBABILITIES:
+            yield current_edge, next_edge, movement
+
+
+def route_respects_od_edge_movement_balance(route_edges, sim_state, raw_graph):
+    """Avoid pathological all-left/all-right route generation at one approach."""
+    counts_by_edge = sim_state.setdefault("od_edge_movement_counts", {})
+
+    for current_edge, _next_edge, movement in route_movement_events(route_edges, raw_graph):
+        available = available_movement_groups_from_edge(current_edge, raw_graph)
+        if len(available) <= 1:
+            continue
+
+        counts = counts_by_edge.get(current_edge, Counter())
+        total_after = sum(counts.values()) + 1
+        if total_after < OD_EDGE_MOVEMENT_BALANCE_MIN_SAMPLES:
+            continue
+
+        if movement == "L" and ("S" in available or "R" in available):
+            left_after = counts.get("L", 0) + 1
+            if left_after / total_after > OD_EDGE_MOVEMENT_BALANCE_MAX_LEFT_SHARE:
+                return False
+
+        if movement == "R" and ("S" in available or "L" in available):
+            right_after = counts.get("R", 0) + 1
+            if right_after / total_after > OD_EDGE_MOVEMENT_BALANCE_MAX_RIGHT_SHARE:
+                return False
+
+    return True
+
+
+def record_od_edge_movement_counts(route_edges, sim_state, raw_graph):
+    counts_by_edge = sim_state.setdefault("od_edge_movement_counts", {})
+    for current_edge, _next_edge, movement in route_movement_events(route_edges, raw_graph):
+        counts = counts_by_edge.setdefault(current_edge, Counter())
+        counts[movement] += 1
+
+
+def movement_for_lane_successor_edge(current_lane, outgoing_edge):
+    """Classify the movement from current_lane to outgoing_edge as S/R/L if possible."""
+    for link in get_lane_links(current_lane):
+        if not link:
+            continue
+        to_lane = link[0]
+        if lane_to_edge(to_lane) != outgoing_edge:
+            continue
+        movement = None
+        if len(link) > 6:
+            movement = sumo_link_direction_to_movement(link[6])
+        if movement is None:
+            _, movement = classify_movement_by_geometry(current_lane, to_lane)
+        if movement in TURN_PROBABILITIES:
+            return movement
+    return None
+
+
+def emergency_successor_bias(current_lane, outgoing_edge):
+    """Prefer straight/right recovery over left when a car is being rescued."""
+    movement = movement_for_lane_successor_edge(current_lane, outgoing_edge)
+    if movement == "S":
+        return 8.0
+    if movement == "R":
+        return 4.0
+    if movement == "L":
+        return 0.45
+    return 1.0
+
+
+def recovery_successor_movement_bias(current_lane, outgoing_edge):
+    """Prefer straight/right emergency exits over left exits when possible.
+
+    This reduces artificial all-left behavior caused by cropped map boundaries.
+    It only affects emergency recovery reroutes, not ordinary OD routing.
+    """
+    movement = None
+
+    for link in get_lane_links(current_lane):
+        if not link:
+            continue
+
+        to_lane = link[0]
+        if lane_to_edge(to_lane) != outgoing_edge:
+            continue
+
+        if len(link) > 6:
+            movement = sumo_link_direction_to_movement(link[6])
+
+        if movement is None:
+            _approach, movement = classify_movement_by_geometry(current_lane, to_lane)
+
+        break
+
+    if movement == "S":
+        return 4.0
+    if movement == "R":
+        return 2.5
+    if movement == "L":
+        return 0.35
+    return 1.0
+
+
 def force_route_to_reachable_lane_successor(
     veh_id,
     current_edge,
@@ -1025,9 +1529,12 @@ def force_route_to_reachable_lane_successor(
 ):
     """Last-resort fallback when the current lane cannot serve the route.
 
-    If the vehicle is already too close to the lane end to change lanes, the
-    safest way to avoid a permanent stop is to rewrite the route to an outgoing
-    edge that the current lane can actually take.
+    If a vehicle is already too close to the lane end to change lanes, rewrite
+    its route to an outgoing edge that the current lane can legally take.
+
+    Emergency recovery is biased toward straight/right exits when available.
+    This prevents cropped map boundaries from turning recovery into an
+    artificial all-left-turn generator.
     """
     outgoing_edges = lane_outgoing_edges(current_lane, allowed_edges=raw_graph)
     if not outgoing_edges:
@@ -1035,6 +1542,34 @@ def force_route_to_reachable_lane_successor(
 
     recent_edges_set = set(recent_edges or ())
     candidates = [edge for edge in outgoing_edges if edge != previous_edge] or outgoing_edges
+
+    def movement_bias(edge):
+        movement = None
+
+        for link in get_lane_links(current_lane):
+            if not link:
+                continue
+
+            to_lane = link[0]
+            if lane_to_edge(to_lane) != edge:
+                continue
+
+            if len(link) > 6:
+                movement = sumo_link_direction_to_movement(link[6])
+
+            if movement is None:
+                _approach, movement = classify_movement_by_geometry(current_lane, to_lane)
+
+            break
+
+        if movement == "S":
+            return 5.0
+        if movement == "R":
+            return 3.0
+        if movement == "L":
+            return 0.25
+        return 1.0
+
     weights = [
         successor_weight(
             current_edge=current_edge,
@@ -1043,9 +1578,12 @@ def force_route_to_reachable_lane_successor(
             edge_metadata=edge_metadata,
             core_edges=core_edges,
             args=args,
-        ) * loop_avoidance_weight_multiplier(current_edge, edge, recent_edges_set)
+        )
+        * loop_avoidance_weight_multiplier(current_edge, edge, recent_edges_set)
+        * movement_bias(edge)
         for edge in candidates
     ]
+
     next_edge = weighted_choice(rng, candidates, weights)
 
     continuation_counts = Counter()
@@ -1080,8 +1618,12 @@ def force_route_to_reachable_lane_successor(
         return False
 
     try:
-        traci.vehicle.setRoute(veh_id, cleaned)
+        release_keep_clear_vehicle(veh_id)
         safe_vehicle_set_speed(veh_id, -1)
+        traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE)
+        TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES.discard(veh_id)
+        release_route_lane_commitment(veh_id)
+        traci.vehicle.setRoute(veh_id, cleaned)
         return True
     except traci.TraCIException:
         return False
@@ -1165,7 +1707,10 @@ def rescue_vehicle_from_unconnected_lane(
             # that actually has the required connection.
             release_keep_clear_vehicle(veh_id)
             safe_vehicle_set_speed(veh_id, -1)
-            traci.vehicle.setLaneChangeMode(veh_id, 1621)
+            TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES.discard(veh_id)
+            ROUTE_LANE_COMMITTED_VEHICLES.discard(veh_id)
+            ROUTE_LANE_COMMITTED_EDGE.pop(veh_id, None)
+            traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE)
             traci.vehicle.changeLane(veh_id, target_lane_index, UNCONNECTED_LANE_RESCUE_DURATION)
             return True
         except traci.TraCIException:
@@ -1456,12 +2001,73 @@ def vehicle_route_end_is_near(veh_id, current_edge, distance_to_end):
     return False
 
 
+
+def lane_link_is_open_to_edge(lane_id, target_edge):
+    """True when SUMO currently exposes an open/green-ish link to target_edge."""
+    if not lane_id or not target_edge:
+        return False
+
+    for link in get_lane_links(lane_id):
+        if not link:
+            continue
+        to_lane = link[0]
+        if lane_to_edge(to_lane) != target_edge:
+            continue
+
+        # Extended layout usually: (toLane, hasPrio, isOpen, hasFoe, viaLane,
+        # state, direction, length). Be permissive across SUMO versions.
+        is_open = False
+        if len(link) > 2:
+            try:
+                is_open = bool(link[2])
+            except Exception:
+                is_open = False
+        state = str(link[5]).lower() if len(link) > 5 else ""
+        if is_open or state in {"g", "m", "o"}:
+            return True
+
+    return False
+
+
+def vehicle_has_clear_open_path(veh_id, lane_id, current_edge, distance_to_end):
+    """A stopped lead car should not be considered validly stopped if it has
+    a green/open link and clear downstream space.
+    """
+    next_edge = planned_next_edge_from_route(veh_id, current_edge)
+    if next_edge is None or next_edge.startswith(":"):
+        return False
+
+    if not lane_has_connection_to_edge(lane_id, next_edge):
+        return False
+
+    if not lane_link_is_open_to_edge(lane_id, next_edge):
+        return False
+
+    if vehicle_has_close_leader(veh_id, max(6.0, min(UNJUSTIFIED_STOP_LEADER_DISTANCE, distance_to_end + 4.0))):
+        return False
+
+    if not next_edge_has_exit_space(next_edge):
+        return False
+
+    if not internal_junction_path_is_clear(lane_id, next_edge):
+        return False
+
+    return True
+
 def has_valid_reason_to_be_stopped(veh_id, lane_id, current_edge, lane_pos, distance_to_end):
     if veh_id in KEEP_CLEAR_HELD_VEHICLES:
         return True
 
     if not lane_id or lane_id.startswith(":"):
         return True
+
+    # If the vehicle is stopped in a lane that cannot reach its planned next
+    # edge, that is not a legitimate stop. Let the watchdog repair/reroute it
+    # instead of allowing it to freeze near the intersection.
+    next_edge = planned_next_edge_from_route(veh_id, current_edge)
+    if next_edge is not None and not next_edge.startswith(":"):
+        if not lane_has_connection_to_edge(lane_id, next_edge):
+            return False
 
     # Newly inserted vehicles can briefly be motionless while SUMO finds a free
     # gap. Do not immediately kick them at the lane start.
@@ -1473,7 +2079,20 @@ def has_valid_reason_to_be_stopped(veh_id, lane_id, current_edge, lane_pos, dist
     if vehicle_has_close_leader(veh_id):
         return True
 
-    # The first vehicle approaching a signalized stop line can legitimately
+    next_edge = planned_next_edge_from_route(veh_id, current_edge)
+
+    # Wrong-lane route mismatch is not a valid reason to freeze. Let the
+    # watchdog route/lane rescue handle it.
+    if next_edge is not None and not next_edge.startswith(":"):
+        if not lane_has_connection_to_edge(lane_id, next_edge):
+            return False
+
+    # If the lead car has an open/green link and downstream space, it should not
+    # stay stopped merely because it is near an intersection.
+    if vehicle_has_clear_open_path(veh_id, lane_id, current_edge, distance_to_end):
+        return False
+
+    # The first vehicle approaching a red/blocked stop line can legitimately
     # stop inside the signal approach zone. For unsignalized junctions, use a
     # smaller generic junction buffer.
     if inside_traffic_light_no_lane_change_zone(lane_id, distance_to_end):
@@ -2072,6 +2691,256 @@ def choose_spawn_edge(sim_state, start_edges_or_zones, edge_metadata, rng):
     )
 
 
+
+
+def od_zone_id_for_edge(context, edge_id):
+    if not context or not edge_id:
+        return None
+    return context.get("edge_to_zone", {}).get(edge_id)
+
+
+def od_route_destination_edge_from_route(route_edges):
+    for edge_id in reversed(route_edges or ()):
+        if edge_id and not str(edge_id).startswith(":"):
+            return edge_id
+    return None
+
+
+def current_route_destination_edge_for_vehicle(veh_id):
+    try:
+        route = list(traci.vehicle.getRoute(veh_id))
+    except traci.TraCIException:
+        return None
+    return od_route_destination_edge_from_route(route)
+
+
+def _od_counter_dec(counter, key):
+    if key is None:
+        return
+    counter[key] -= 1
+    if counter[key] <= 0:
+        counter.pop(key, None)
+
+
+def unregister_active_od_destination_vehicle(sim_state, veh_id):
+    dest_by_vehicle = sim_state.setdefault("active_destination_edge_by_vehicle", {})
+    origin_zone_by_vehicle = sim_state.setdefault("active_origin_zone_by_vehicle", {})
+    dest_zone_by_vehicle = sim_state.setdefault("active_destination_zone_by_vehicle", {})
+    zone_counts = sim_state.setdefault("active_destination_zone_counts", Counter())
+    pair_counts = sim_state.setdefault("active_od_pair_zone_counts", Counter())
+
+    old_dest_zone = dest_zone_by_vehicle.pop(veh_id, None)
+    old_origin_zone = origin_zone_by_vehicle.pop(veh_id, None)
+    dest_by_vehicle.pop(veh_id, None)
+
+    _od_counter_dec(zone_counts, old_dest_zone)
+    if old_origin_zone is not None and old_dest_zone is not None:
+        _od_counter_dec(pair_counts, (old_origin_zone, old_dest_zone))
+
+
+def register_active_od_destination_vehicle(sim_state, veh_id, route_edges, context):
+    """Track the active destination zone of one passenger vehicle.
+
+    This is used only for demand balancing.  It does not change the vehicle's
+    already-created SUMO route.
+    """
+    if not context or not route_edges:
+        return
+
+    origin = route_edges[0]
+    destination = od_route_destination_edge_from_route(route_edges)
+    if not origin or not destination:
+        return
+
+    origin_zone = od_zone_id_for_edge(context, origin)
+    dest_zone = od_zone_id_for_edge(context, destination)
+    if dest_zone is None:
+        return
+
+    # Replace old bookkeeping if the same veh_id was already registered.
+    unregister_active_od_destination_vehicle(sim_state, veh_id)
+
+    sim_state.setdefault("active_destination_edge_by_vehicle", {})[veh_id] = destination
+    sim_state.setdefault("active_origin_zone_by_vehicle", {})[veh_id] = origin_zone
+    sim_state.setdefault("active_destination_zone_by_vehicle", {})[veh_id] = dest_zone
+    sim_state.setdefault("active_destination_zone_counts", Counter())[dest_zone] += 1
+
+    if origin_zone is not None:
+        sim_state.setdefault("active_od_pair_zone_counts", Counter())[(origin_zone, dest_zone)] += 1
+
+
+def cleanup_active_od_destination_tracking(sim_state):
+    """Remove destination-zone counts for cars that have left SUMO.
+
+    Fast mode: do not poll every active vehicle's full route just to check
+    whether rescue logic changed its final edge. That was a major TraCI
+    bottleneck in GUI runs. Counts may be slightly stale for a rerouted car,
+    but they are corrected when the car disappears.
+    """
+    context = sim_state.get("od_context")
+    if not context:
+        return
+
+    dest_by_vehicle = sim_state.setdefault("active_destination_edge_by_vehicle", {})
+    if not dest_by_vehicle:
+        return
+
+    try:
+        active_ids = set(traci.vehicle.getIDList())
+    except traci.TraCIException:
+        return
+
+    for veh_id in list(dest_by_vehicle):
+        if veh_id not in active_ids:
+            unregister_active_od_destination_vehicle(sim_state, veh_id)
+
+def destination_zone_candidate_edges(zone, pool):
+    return sorted(set(zone.get("edges", ())).intersection(pool))
+
+
+def destination_zone_road_weight(zone_edges, edge_metadata):
+    if not zone_edges:
+        return 0.0
+    # Keep road quality, but make it sublinear so one arterial-heavy zone cannot
+    # dominate all destinations.
+    return sum(max(0.001, edge_base_weight(edge_id, edge_metadata)) for edge_id in zone_edges) ** OD_DESTINATION_ZONE_EDGE_WEIGHT_POWER
+
+
+def choose_active_balanced_destination_zone(sim_state, zones, pool, context, edge_metadata, rng, origin=None):
+    """Choose an underused destination zone for the current active population."""
+    pool = set(pool)
+    candidate_rows = []
+
+    zone_counts = sim_state.setdefault("active_destination_zone_counts", Counter())
+    pair_counts = sim_state.setdefault("active_od_pair_zone_counts", Counter())
+    active_destination_total = max(0, sum(zone_counts.values()))
+
+    origin_zone = od_zone_id_for_edge(context, origin) if origin is not None else None
+    candidate_zone_count = max(1, len(zones))
+    ideal_per_zone = max(1.0, active_destination_total / candidate_zone_count)
+
+    for zone in zones:
+        zone_id = zone.get("id")
+        zone_edges = destination_zone_candidate_edges(zone, pool)
+        if not zone_edges:
+            continue
+
+        zone_active = zone_counts.get(zone_id, 0)
+        pair_active = pair_counts.get((origin_zone, zone_id), 0) if origin_zone is not None else 0
+
+        # Strongly prefer low-count destination zones.  This is the main fix for
+        # red-dot hotspots.
+        zone_balance = 1.0 / ((zone_active + 1.0) ** OD_DESTINATION_ZONE_BALANCE_POWER)
+
+        # Also avoid repeatedly sending the same origin side to the same
+        # destination side.
+        pair_balance = 1.0 / ((pair_active + 1.0) ** OD_DESTINATION_OD_PAIR_BALANCE_POWER)
+
+        # If a zone has already exceeded a reasonable active share, keep it
+        # technically possible but almost never selected unless the map leaves
+        # no other valid far destinations.
+        hotspot_multiplier = 1.0
+        if active_destination_total >= 20:
+            share = zone_active / max(1.0, active_destination_total)
+            if share > OD_DESTINATION_ZONE_HOTSPOT_SHARE and zone_active > ideal_per_zone:
+                hotspot_multiplier = OD_DESTINATION_ZONE_HOTSPOT_MULTIPLIER
+
+        road_weight = destination_zone_road_weight(zone_edges, edge_metadata)
+        weight = max(1e-9, zone_balance * pair_balance * hotspot_multiplier * road_weight)
+
+        candidate_rows.append((zone, zone_edges, weight, zone_active, pair_active))
+
+    if not candidate_rows:
+        return None, []
+
+    # Use the least-loaded half of zones as a hard preference, unless that would
+    # leave no candidates. This prevents one destination zone from staying hot
+    # merely because it has high-weight roads.
+    counts = sorted(row[3] for row in candidate_rows)
+    median_count = counts[len(counts) // 2]
+    preferred_rows = [row for row in candidate_rows if row[3] <= median_count + 1]
+    rows = preferred_rows or candidate_rows
+
+    chosen = weighted_choice(rng, [row[0] for row in rows], [row[2] for row in rows])
+    for zone, zone_edges, _weight, _zone_active, _pair_active in rows:
+        if zone is chosen:
+            return zone, zone_edges
+
+    # Fallback if object identity somehow changed.
+    zone = chosen
+    return zone, destination_zone_candidate_edges(zone, pool)
+
+
+def print_destination_zone_hotspots(sim_state, context, force=False):
+    """Optional debug summary for active destination zones."""
+    if not context:
+        return
+
+    try:
+        now = float(traci.simulation.getTime())
+    except Exception:
+        now = 0.0
+
+    if not force and now - sim_state.get("last_destination_zone_histogram_print", -1e18) < OD_DESTINATION_ZONE_HISTOGRAM_PRINT_INTERVAL:
+        return
+
+    counts = sim_state.get("active_destination_zone_counts", Counter())
+    total = sum(counts.values())
+    if total <= 0:
+        return
+
+    sim_state["last_destination_zone_histogram_print"] = now
+
+    hottest = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:8]
+    print(f"\n[destination-zone-balance] t={now:.1f}s active_destinations={total}", flush=True)
+    print("  hottest destination zones:", flush=True)
+    for zone_id, count in hottest:
+        share = 100.0 * count / max(1, total)
+        print(f"    zone={zone_id} count={count:4d} share={share:5.1f}%", flush=True)
+    print("", flush=True)
+
+
+def choose_zone_balanced_destination_edge(sim_state, pool, context, edge_metadata, rng, origin=None):
+    """Choose OD destinations by active zone balance, not just road weight.
+
+    The previous version cycled zones in round-robin order, but it did not know
+    how many currently active vehicles were already trying to end in each zone.
+    On a cropped map, that can still create a red-dot destination hotspot.  This
+    version tracks active destination zones and heavily prefers underused zones.
+    """
+    pool = set(pool)
+    if not pool:
+        return None
+
+    zones = [zone for zone in context.get("zones", []) if pool.intersection(zone.get("edges", []))]
+    if not zones:
+        return weighted_edge_choice(rng, pool, edge_metadata)
+
+    if OD_ACTIVE_DESTINATION_ZONE_BALANCE:
+        zone, zone_edges = choose_active_balanced_destination_zone(
+            sim_state=sim_state,
+            zones=zones,
+            pool=pool,
+            context=context,
+            edge_metadata=edge_metadata,
+            rng=rng,
+            origin=origin,
+        )
+        if zone_edges:
+            return weighted_edge_choice(rng, zone_edges, edge_metadata)
+
+    # Fallback: simple round-robin zone balancing.
+    start = sim_state.get("next_od_destination_zone_index", 0)
+    for offset in range(len(zones)):
+        zone = zones[(start + offset) % len(zones)]
+        zone_edges = sorted(pool.intersection(zone.get("edges", [])))
+        if zone_edges:
+            sim_state["next_od_destination_zone_index"] = start + offset + 1
+            return weighted_edge_choice(rng, zone_edges, edge_metadata)
+
+    return weighted_edge_choice(rng, pool, edge_metadata)
+
+
 def successor_weight(
     current_edge,
     next_edge,
@@ -2166,6 +3035,149 @@ def build_od_zones(edges, edge_metadata, grid_size):
         zones.append({"id": zone_id, "edges": sorted(zone_edges)})
 
     return zones, edge_to_zone, (min_x, min_y, max_x, max_y)
+
+
+
+
+def _od_zone_grid_poly_id(kind, index):
+    return f"od_zone_grid_{kind}_{index}"
+
+
+def remove_od_zone_grid_lines():
+    """Remove old OD-zone overlay polygons from the current SUMO connection."""
+    for poly_id in list(_OD_ZONE_GRID_POLYGON_IDS):
+        try:
+            traci.polygon.remove(poly_id)
+        except Exception:
+            pass
+    _OD_ZONE_GRID_POLYGON_IDS.clear()
+
+
+def _add_od_zone_rectangle(poly_id, x1, y1, x2, y2, color, layer, polygon_type):
+    x1, y1, x2, y2 = float(x1), float(y1), float(x2), float(y2)
+    shape = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+
+    try:
+        traci.polygon.add(
+            poly_id,
+            shape,
+            color,
+            fill=True,
+            polygonType=polygon_type,
+            layer=layer,
+            lineWidth=1,
+        )
+        _OD_ZONE_GRID_POLYGON_IDS.add(poly_id)
+        return True
+    except Exception:
+        return False
+
+
+def _od_zone_fill_color(gx, gy):
+    palette = OD_ZONE_FILL_COLORS or ((80, 130, 255),)
+    base = palette[(gx * 7 + gy * 13) % len(palette)]
+    return (int(base[0]), int(base[1]), int(base[2]), int(OD_ZONE_FILL_ALPHA))
+
+
+def draw_od_zone_grid_lines(context, args):
+    """Draw the OD destination-zone grid in SUMO-GUI.
+
+    The overlay is based on the same bounds and grid size used by
+    build_od_zones(), so the visible cells match the destination-balancing
+    zones. Each cell is colored with a translucent fill, and then thick blue
+    grid lines are drawn as a low-layer background overlay so the zones are visible without hiding roads/cars.
+    """
+    if not OD_ZONE_GRID_LINES_ENABLED:
+        return False
+
+    # Only draw in GUI runs. Headless evaluation should not spend time adding
+    # visual debugging polygons.
+    if not bool(getattr(args, "gui", False)):
+        return False
+
+    bounds = context.get("bounds") if context else None
+    if not bounds or len(bounds) != 4:
+        return False
+
+    min_x, min_y, max_x, max_y = [float(v) for v in bounds]
+    width = max(max_x - min_x, 1.0)
+    height = max(max_y - min_y, 1.0)
+    grid_size = max(1, int(getattr(args, "spawn_grid_size", 6)))
+
+    remove_od_zone_grid_lines()
+
+    drawn_cells = 0
+    drawn_lines = 0
+
+    # Colored zone fills. These are large translucent rectangles, so they are
+    # much easier to see than only drawing blue grid lines.
+    if OD_ZONE_COLOR_FILL_ENABLED:
+        for gx in range(grid_size):
+            x1 = min_x + width * gx / grid_size
+            x2 = min_x + width * (gx + 1) / grid_size
+            for gy in range(grid_size):
+                y1 = min_y + height * gy / grid_size
+                y2 = min_y + height * (gy + 1) / grid_size
+                poly_id = _od_zone_grid_poly_id("cell", f"{gx}_{gy}")
+                if _add_od_zone_rectangle(
+                    poly_id,
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    _od_zone_fill_color(gx, gy),
+                    OD_ZONE_FILL_LAYER,
+                    "od_zone_color_fill",
+                ):
+                    drawn_cells += 1
+
+    half = max(0.25, float(OD_ZONE_GRID_LINE_THICKNESS) / 2.0)
+
+    # Vertical grid lines.
+    for i in range(grid_size + 1):
+        x = min_x + width * i / grid_size
+        color = OD_ZONE_GRID_BORDER_COLOR if i in (0, grid_size) else OD_ZONE_GRID_LINE_COLOR
+        poly_id = _od_zone_grid_poly_id("v", i)
+        if _add_od_zone_rectangle(
+            poly_id,
+            x - half,
+            min_y,
+            x + half,
+            max_y,
+            color,
+            OD_ZONE_GRID_LINE_LAYER,
+            "od_zone_grid_line",
+        ):
+            drawn_lines += 1
+
+    # Horizontal grid lines.
+    for j in range(grid_size + 1):
+        y = min_y + height * j / grid_size
+        color = OD_ZONE_GRID_BORDER_COLOR if j in (0, grid_size) else OD_ZONE_GRID_LINE_COLOR
+        poly_id = _od_zone_grid_poly_id("h", j)
+        if _add_od_zone_rectangle(
+            poly_id,
+            min_x,
+            y - half,
+            max_x,
+            y + half,
+            color,
+            OD_ZONE_GRID_LINE_LAYER,
+            "od_zone_grid_line",
+        ):
+            drawn_lines += 1
+
+    print()
+    print("OD destination-zone GUI background overlay:")
+    print(f"  grid:         {grid_size} x {grid_size}")
+    print(f"  colored cells:{drawn_cells}")
+    print(f"  grid lines:   {drawn_lines}")
+    print(f"  fill alpha:   {OD_ZONE_FILL_ALPHA}")
+    print(f"  line width:   {OD_ZONE_GRID_LINE_THICKNESS}")
+    print(f"  layers:       fill={OD_ZONE_FILL_LAYER}, lines={OD_ZONE_GRID_LINE_LAYER}")
+    print(f"  bounds:       x=[{min_x:.1f}, {max_x:.1f}], y=[{min_y:.1f}, {max_y:.1f}]")
+
+    return (drawn_cells + drawn_lines) > 0
 
 
 def zone_separation(edge_a, edge_b, edge_to_zone):
@@ -2295,7 +3307,15 @@ def build_od_context(valid_edges, raw_graph, edge_metadata, args):
     print(f"  minimum route distance:      {args.od_min_route_distance:.0f} m")
     print(f"  minimum Euclidean distance:  {args.od_min_euclidean_distance:.0f} m")
     print(f"  minimum zone separation:     {args.od_min_zone_separation}")
-    print("  S/R/L movements are no longer directly forced in OD mode.")
+    if OD_APPROACH_TURN_CONTROL_ENABLED:
+        print("  OD approach turn control:    ON (per-approach S/R/L balancing overrides bottleneck turns)")
+    else:
+        print("  S/R/L movements are no longer directly forced in OD mode.")
+    if OD_LOCAL_ENDPOINTS_ONLY:
+        print("  endpoint rule:              LOCAL ROADS ONLY for normal car origins/destinations")
+        print("  random-walk OD fallback:    disabled for strict local endpoints")
+
+    draw_od_zone_grid_lines(context, args)
 
     return context
 
@@ -2333,7 +3353,21 @@ def od_pair_far_enough(origin, destination, context, edge_metadata, args):
 def choose_od_pair(sim_state, context, edge_metadata, rng, args):
     trip_type = choose_od_trip_type(rng, args)
 
-    if trip_type == "through":
+    # Strict local-endpoint mode:
+    #   origin      = local/neighborhood road
+    #   destination = local/neighborhood road
+    #   middle      = SUMO fastest route, allowed to use main/connector roads
+    # This fixes destination sinks caused by ending trips on boundary/main roads.
+    if OD_LOCAL_ENDPOINTS_ONLY:
+        local_pool = sorted(context.get("local", []))
+        if not local_pool:
+            return None, None, "local_endpoint_no_local_edges"
+
+        origin_pool = local_pool
+        destination_pool = local_pool
+        trip_type = f"local_endpoint_{trip_type}"
+
+    elif trip_type == "through":
         origin_pool = context["boundary"] or context["main_like"] or context["all"]
         destination_pool = context["boundary"] or context["main_like"] or context["all"]
 
@@ -2369,11 +3403,29 @@ def choose_od_pair(sim_state, context, edge_metadata, rng, args):
     ]
 
     if not far_destinations:
-        far_destinations = [edge_id for edge_id in context["all"] if edge_id != origin]
+        # Preserve the endpoint guarantee.  In local-endpoint mode, relax the
+        # distance/zone-separation constraints before falling back to non-local
+        # roads.  A slightly shorter local-to-local route is better than a route
+        # that starts/ends on an arterial/boundary edge.
+        fallback_pool = destination_pool if OD_LOCAL_ENDPOINTS_ONLY else context["all"]
+        far_destinations = [edge_id for edge_id in fallback_pool if edge_id != origin]
 
-    destination = weighted_edge_choice(rng, far_destinations, edge_metadata)
+    if not far_destinations:
+        return None, None, trip_type
+
+    if OD_DESTINATION_ZONE_BALANCE:
+        destination = choose_zone_balanced_destination_edge(
+            sim_state=sim_state,
+            pool=far_destinations,
+            context=context,
+            edge_metadata=edge_metadata,
+            rng=rng,
+            origin=origin,
+        )
+    else:
+        destination = weighted_edge_choice(rng, far_destinations, edge_metadata)
+
     return origin, destination, trip_type
-
 
 def fastest_sumo_route(origin_edge, destination_edge):
     try:
@@ -2443,8 +3495,341 @@ def od_route_is_reasonable(route_edges, origin, destination, trip_type, context,
     return True
 
 
+
+def route_movement_entries(route_edges):
+    """Return (incoming_edge, outgoing_edge, movement) for route transitions."""
+    entries = []
+    for current_edge, next_edge in zip(route_edges, route_edges[1:]):
+        movement = classify_edge_successor_movement(current_edge, next_edge)
+        if movement in TURN_PROBABILITIES:
+            entries.append((current_edge, next_edge, movement))
+    return entries
+
+
+def route_has_excessive_left_bias(route_edges, sim_state, args):
+    return False
+    """Reject routes that would create obvious left-turn artifacts.
+
+    This is not a hard ban on left turns. It only filters routes when either the
+    whole route is left-heavy or one incoming edge is already becoming a nearly
+    all-left approach. The goal is to avoid artifacts caused by clipped map
+    boundaries, where straight/right continuations may simply not exist in the
+    downloaded OSM crop.
+    """
+    entries = route_movement_entries(route_edges)
+    if not entries:
+        return False
+
+    counts = Counter(movement for _cur, _nxt, movement in entries)
+    total = counts["S"] + counts["R"] + counts["L"]
+    if total >= OD_ROUTE_MIN_MOVEMENTS_FOR_LEFT_FILTER:
+        if counts["L"] / max(1, total) > OD_ROUTE_MAX_LEFT_SHARE:
+            return True
+
+    approach_counts = sim_state.setdefault("od_approach_movement_counts", defaultdict(Counter))
+    for current_edge, _next_edge, movement in entries:
+        if movement != "L":
+            continue
+
+        existing = approach_counts[current_edge]
+        seen = existing["S"] + existing["R"] + existing["L"]
+        if seen < OD_APPROACH_LEFT_BIAS_MIN_SAMPLES:
+            continue
+
+        projected_left_share = (existing["L"] + 1) / max(1, seen + 1)
+        if projected_left_share > OD_APPROACH_MAX_LEFT_SHARE:
+            return True
+
+    return False
+
+
+def record_od_route_approach_movements(sim_state, route_edges):
+    """Record per-approach movement counts after accepting/spawning a route."""
+    approach_counts = sim_state.setdefault("od_approach_movement_counts", defaultdict(Counter))
+    for current_edge, _next_edge, movement in route_movement_entries(route_edges):
+        approach_counts[current_edge][movement] += 1
+
+
+
+@lru_cache(maxsize=50000)
+def transition_movement_set(current_edge, next_edge):
+    """Return all SUMO S/R/L directions exposed for current_edge -> next_edge.
+
+    A few SUMO intersections expose multiple lane links from the same incoming
+    edge to the same outgoing edge.  The old classifier returned the first link
+    it saw, which can hide a real left-turn-heavy transition.  For OD balancing
+    we use the full movement set and apply the most conservative normal label.
+    """
+    result = set()
+
+    try:
+        lane_count = traci.edge.getLaneNumber(current_edge)
+    except traci.TraCIException:
+        return result
+
+    for lane_index in range(lane_count):
+        in_lane = f"{current_edge}_{lane_index}"
+        try:
+            try:
+                links = traci.lane.getLinks(in_lane, extended=True)
+            except TypeError:
+                links = traci.lane.getLinks(in_lane)
+        except traci.TraCIException:
+            continue
+
+        for link in links:
+            if not link or len(link) < 1:
+                continue
+
+            to_lane = link[0]
+            if lane_to_edge(to_lane) != next_edge:
+                continue
+
+            movement = None
+            if len(link) > 6:
+                movement = sumo_link_direction_to_movement(link[6])
+
+            if movement is None:
+                _approach, movement = classify_movement_by_geometry(in_lane, to_lane)
+
+            if movement in TURN_PROBABILITIES:
+                result.add(movement)
+
+    return result
+
+
+def conservative_transition_movement(current_edge, next_edge):
+    """Classify a route transition for balancing.
+
+    If any lane-link says this edge transition can be a left turn, count it as
+    left for OD balancing.  This is intentionally conservative because the bug
+    we are trying to eliminate is a one-approach all-left artifact.
+    """
+    movements = transition_movement_set(current_edge, next_edge)
+    if "L" in movements:
+        return "L"
+    if "R" in movements:
+        return "R"
+    if "S" in movements:
+        return "S"
+    return classify_edge_successor_movement(current_edge, next_edge)
+
+
+def active_balance_route_entries(route_edges, raw_graph):
+    """Return route transitions that should be balanced.
+
+    We balance both by movement and by exact successor.  The successor cap is
+    important because some SUMO networks label odd cropped-map links
+    inconsistently, but the visual problem is still clear: too many cars choose
+    the same outgoing edge from one approach.
+    """
+    entries = []
+    raw_graph = raw_graph or {}
+
+    for current_edge, next_edge in zip(route_edges, route_edges[1:]):
+        if not current_edge or not next_edge:
+            continue
+        if current_edge.startswith(":") or next_edge.startswith(":"):
+            continue
+        if current_edge == next_edge:
+            continue
+
+        successors = list(raw_graph.get(current_edge, ()))
+        successor_count = len([edge for edge in successors if edge and edge != current_edge])
+        movement = conservative_transition_movement(current_edge, next_edge)
+        available_movements = available_movement_groups_from_edge(current_edge, raw_graph)
+
+        entries.append({
+            "current_edge": current_edge,
+            "next_edge": next_edge,
+            "movement": movement,
+            "successor_count": successor_count,
+            "available_movements": set(available_movements),
+        })
+
+    return entries
+
+
+def cleanup_active_od_approach_balance_tracking(sim_state):
+    """Remove active-route balance counts for vehicles that left SUMO."""
+    by_vehicle = sim_state.setdefault("active_od_route_balance_by_vehicle", {})
+    movement_counts = sim_state.setdefault("active_od_approach_movement_counts", defaultdict(Counter))
+    successor_counts = sim_state.setdefault("active_od_approach_successor_counts", defaultdict(Counter))
+
+    try:
+        active_ids = set(traci.vehicle.getIDList())
+    except traci.TraCIException:
+        active_ids = set()
+
+    for veh_id in list(by_vehicle):
+        if veh_id in active_ids:
+            continue
+
+        for current_edge, next_edge, movement in by_vehicle.pop(veh_id, []):
+            if movement in TURN_PROBABILITIES:
+                movement_counts[current_edge][movement] -= 1
+                if movement_counts[current_edge][movement] <= 0:
+                    movement_counts[current_edge].pop(movement, None)
+            successor_counts[current_edge][next_edge] -= 1
+            if successor_counts[current_edge][next_edge] <= 0:
+                successor_counts[current_edge].pop(next_edge, None)
+
+            if not movement_counts[current_edge]:
+                movement_counts.pop(current_edge, None)
+            if not successor_counts[current_edge]:
+                successor_counts.pop(current_edge, None)
+
+
+def register_active_od_approach_balance_vehicle(sim_state, veh_id, route_edges, raw_graph):
+    """Track which approach movements/successors this active car contributes."""
+    if not OD_ACTIVE_APPROACH_BALANCE:
+        return
+
+    movement_counts = sim_state.setdefault("active_od_approach_movement_counts", defaultdict(Counter))
+    successor_counts = sim_state.setdefault("active_od_approach_successor_counts", defaultdict(Counter))
+    by_vehicle = sim_state.setdefault("active_od_route_balance_by_vehicle", {})
+
+    entries = []
+    for item in active_balance_route_entries(route_edges, raw_graph):
+        current_edge = item["current_edge"]
+        next_edge = item["next_edge"]
+        movement = item["movement"]
+
+        successor_counts[current_edge][next_edge] += 1
+        if movement in TURN_PROBABILITIES:
+            movement_counts[current_edge][movement] += 1
+
+        entries.append((current_edge, next_edge, movement))
+
+    by_vehicle[veh_id] = entries
+
+
+def active_approach_share_limit_for_movement(movement):
+    if movement == "L":
+        return OD_ACTIVE_APPROACH_MAX_LEFT_SHARE
+    if movement == "R":
+        return OD_ACTIVE_APPROACH_MAX_RIGHT_SHARE
+    if movement == "S":
+        return OD_ACTIVE_APPROACH_MAX_STRAIGHT_SHARE
+    return 1.0
+
+
+def route_respects_active_approach_balance(route_edges, sim_state, raw_graph, attempt, args):
+    """Reject OD routes that would overload one approach with one movement/exit.
+
+    This is the main global fix for the repeated-left-turn problem.  It does
+    not target one hardcoded intersection.  It applies to every approach in the
+    map and prevents any one outgoing edge or turn movement from dominating the
+    ACTIVE vehicle population.
+    """
+    if not OD_ACTIVE_APPROACH_BALANCE:
+        return True
+
+    # Near the absolute end of the attempt budget, relax only enough to avoid a
+    # total spawn stall on tiny/strange maps.  With the default 120 attempts,
+    # the first 115 attempts still enforce the rule.
+    relax_after = int(max(1, args.od_route_attempts) * OD_ACTIVE_APPROACH_RELAX_FRACTION)
+    if attempt >= relax_after:
+        return True
+
+    movement_counts = sim_state.setdefault("active_od_approach_movement_counts", defaultdict(Counter))
+    successor_counts = sim_state.setdefault("active_od_approach_successor_counts", defaultdict(Counter))
+
+    # Project all transitions in this route at once.  A long route can pass
+    # through the same approach more than once, so include route-local counts.
+    projected_movement_add = defaultdict(Counter)
+    projected_successor_add = defaultdict(Counter)
+
+    for item in active_balance_route_entries(route_edges, raw_graph):
+        current_edge = item["current_edge"]
+        next_edge = item["next_edge"]
+        movement = item["movement"]
+        successor_count = item["successor_count"]
+        available_movements = item["available_movements"]
+
+        projected_successor_add[current_edge][next_edge] += 1
+        if movement in TURN_PROBABILITIES:
+            projected_movement_add[current_edge][movement] += 1
+
+        # 1) Exact outgoing-edge dominance cap.  This catches the visual issue
+        # even when SUMO labels the same outgoing edge inconsistently.
+        existing_successors = successor_counts[current_edge]
+        total_successor_after = sum(existing_successors.values()) + sum(projected_successor_add[current_edge].values())
+        if successor_count >= 2 and total_successor_after >= OD_ACTIVE_APPROACH_MIN_SAMPLES:
+            next_after = existing_successors[next_edge] + projected_successor_add[current_edge][next_edge]
+            if next_after / max(1, total_successor_after) > OD_ACTIVE_APPROACH_MAX_SUCCESSOR_SHARE:
+                return False
+
+        # 2) Movement dominance cap.  Only apply this when SUMO exposes multiple
+        # normal movement groups; if an approach genuinely has only one legal
+        # movement, the successor cap above is the safer general control.
+        if movement in TURN_PROBABILITIES and len(available_movements) >= 2:
+            existing_movements = movement_counts[current_edge]
+            total_movement_after = sum(existing_movements.values()) + sum(projected_movement_add[current_edge].values())
+            if total_movement_after >= OD_ACTIVE_APPROACH_MIN_SAMPLES:
+                movement_after = existing_movements[movement] + projected_movement_add[current_edge][movement]
+                if movement_after / max(1, total_movement_after) > active_approach_share_limit_for_movement(movement):
+                    return False
+
+    return True
+
+
+def print_active_approach_hotspots(sim_state, force=False):
+    if not OD_ACTIVE_APPROACH_BALANCE:
+        return
+
+    try:
+        now = float(traci.simulation.getTime())
+    except Exception:
+        now = 0.0
+
+    if not force and now - sim_state.get("last_active_approach_hotspot_print", -1e18) < OD_ACTIVE_APPROACH_HOTSPOT_PRINT_INTERVAL:
+        return
+
+    sim_state["last_active_approach_hotspot_print"] = now
+    movement_counts = sim_state.get("active_od_approach_movement_counts", {})
+    successor_counts = sim_state.get("active_od_approach_successor_counts", {})
+
+    rows = []
+    for edge_id, counts in movement_counts.items():
+        total = sum(counts.values())
+        if total < OD_ACTIVE_APPROACH_HOTSPOT_MIN_SAMPLES:
+            continue
+        top_movement, top_count = max(counts.items(), key=lambda kv: kv[1])
+        share = top_count / max(1, total)
+        if share >= OD_ACTIVE_APPROACH_HOTSPOT_SHARE:
+            top_successor = "NA"
+            top_successor_count = 0
+            if edge_id in successor_counts and successor_counts[edge_id]:
+                top_successor, top_successor_count = max(successor_counts[edge_id].items(), key=lambda kv: kv[1])
+            rows.append((share, total, edge_id, top_movement, top_count, top_successor, top_successor_count))
+
+    if not rows:
+        return
+
+    rows.sort(reverse=True)
+    print(f"\n[active-approach-balance] t={now:.1f}s movement/successor hotspots", flush=True)
+    print("  edge                         n   top_move share   top_successor                 succ_n", flush=True)
+    for share, total, edge_id, top_movement, top_count, top_successor, top_successor_count in rows[:OD_ACTIVE_APPROACH_MAX_HOTSPOTS_TO_PRINT]:
+        print(
+            f"  {str(edge_id):<28} {total:4d} {top_movement:>8} {100.0 * share:5.1f}%   "
+            f"{str(top_successor):<28} {top_successor_count:6d}",
+            flush=True,
+        )
+    print("", flush=True)
+
+def recovery_movement_multiplier(current_edge, next_edge):
+    movement = classify_edge_successor_movement(current_edge, next_edge)
+    if movement == "S":
+        return RECOVERY_STRAIGHT_WEIGHT_MULTIPLIER
+    if movement == "R":
+        return RECOVERY_RIGHT_WEIGHT_MULTIPLIER
+    if movement == "L":
+        return RECOVERY_LEFT_WEIGHT_MULTIPLIER
+    return 1.0
+
 def build_od_route(sim_state, context, raw_graph, edge_metadata, rng, args):
-    for _ in range(args.od_route_attempts):
+    for attempt in range(args.od_route_attempts):
         origin, destination, trip_type = choose_od_pair(
             sim_state=sim_state,
             context=context,
@@ -2471,6 +3856,36 @@ def build_od_route(sim_state, context, raw_graph, edge_metadata, rng, args):
             edge_metadata=edge_metadata,
             args=args,
         ):
+            continue
+
+        # Softly prevent pathological per-intersection movement imbalance.
+        # This is what fixes the visual issue where one approach degenerates
+        # into nearly every car turning left.  Relax near the end of the
+        # attempt budget so unusual maps can still spawn vehicles.
+        relax_after = int(max(1, args.od_route_attempts) * OD_EDGE_MOVEMENT_BALANCE_RELAX_FRACTION)
+        if attempt < relax_after and not route_respects_od_edge_movement_balance(
+            route_edges=route_edges,
+            sim_state=sim_state,
+            raw_graph=raw_graph,
+        ):
+            continue
+
+        # Stronger ACTIVE-population balancing. This prevents one approach from
+        # becoming dominated by a single outgoing edge / left-turn movement even
+        # when destinations happen to lie on the same side of that intersection.
+        if not route_respects_active_approach_balance(
+            route_edges=route_edges,
+            sim_state=sim_state,
+            raw_graph=raw_graph,
+            attempt=attempt,
+            args=args,
+        ):
+            continue
+
+        # Keep the older whole-route left-bias filter active too. It was
+        # present in the file but was not actually called in build_od_route().
+        left_relax_after = int(max(1, args.od_route_attempts) * OD_LEFT_BIAS_RELAX_AFTER_ATTEMPTS_FRACTION)
+        if attempt < left_relax_after and route_has_excessive_left_bias(route_edges, sim_state, args):
             continue
 
         return route_edges, {
@@ -2534,8 +3949,8 @@ def write_empty_route_file(route_file):
         '''    <vType id="ambulance"
            vClass="emergency"
            guiShape="emergency"
-           length="7.0"
-           width="2.4"
+           length="5.95"
+           width="2.04"
            minGap="1.0"
            accel="3.5"
            decel="6.0"
@@ -3344,6 +4759,120 @@ def update_controller_after_simstep(controller):
         controller["disabled"] = True
 
 
+def _get_tls_program_logics_for_debug(tls_id):
+    """Return SUMO's native TLS program logics if this TraCI version exposes them."""
+    try:
+        if hasattr(traci.trafficlight, "getAllProgramLogics"):
+            return list(traci.trafficlight.getAllProgramLogics(tls_id) or [])
+    except Exception:
+        pass
+
+    try:
+        if hasattr(traci.trafficlight, "getCompleteRedYellowGreenDefinition"):
+            return list(traci.trafficlight.getCompleteRedYellowGreenDefinition(tls_id) or [])
+    except Exception:
+        pass
+
+    return []
+
+
+def print_phase_lengths_for_tls(tls_id, controller=None, skipped=False):
+    """Print native SUMO and custom-controller phase lengths for one TLS.
+
+    The simulation normally ignores the original SUMO program durations after
+    it installs our safe 4-phase controller with setRedYellowGreenState().  So
+    this prints both:
+      1. Native SUMO program phases from the .net.xml, if TraCI exposes them.
+      2. The active generated controller phases used by this script, if usable.
+    """
+    print()
+    print("=" * 88)
+    print(f"Traffic light phase lengths for: {tls_id}")
+    print("=" * 88)
+
+    try:
+        tls_ids = set(traci.trafficlight.getIDList())
+    except Exception:
+        tls_ids = set()
+
+    if tls_id not in tls_ids:
+        print("  Status: NOT FOUND in this map's TraCI traffic-light ID list.")
+        print("=" * 88)
+        print()
+        return
+
+    # 1) Native SUMO program timing from the network.
+    logics = _get_tls_program_logics_for_debug(tls_id)
+    if logics:
+        print("Native SUMO program timing from the network:")
+        for logic_i, logic in enumerate(logics):
+            program_id = getattr(logic, "programID", getattr(logic, "programId", "unknown"))
+            logic_type = getattr(logic, "type", "unknown")
+            current_phase = getattr(logic, "currentPhaseIndex", getattr(logic, "currentPhase", "unknown"))
+            phases = list(getattr(logic, "phases", []) or [])
+            print(f"  Program {logic_i}: id={program_id}, type={logic_type}, currentPhaseIndex={current_phase}")
+            if not phases:
+                print("    no phases exposed by TraCI")
+                continue
+            for phase_i, phase in enumerate(phases):
+                duration = float(getattr(phase, "duration", 0.0) or 0.0)
+                min_dur = getattr(phase, "minDur", None)
+                max_dur = getattr(phase, "maxDur", None)
+                state = str(getattr(phase, "state", ""))
+                extras = []
+                if min_dur is not None:
+                    extras.append(f"min={float(min_dur):.1f}s")
+                if max_dur is not None:
+                    extras.append(f"max={float(max_dur):.1f}s")
+                extra_text = f" ({', '.join(extras)})" if extras else ""
+                print(f"    native phase {phase_i:02d}: duration={duration:6.1f}s{extra_text} state={state}")
+    else:
+        print("Native SUMO program timing from the network: not available from this TraCI version.")
+
+    # 2) Timing used by this script's generated safe controller.
+    if controller is None:
+        if skipped:
+            print()
+            print("Generated safe controller timing used by this script:")
+            print("  This TLS was skipped by build_controller_for_tls(), so the script does not control it.")
+        else:
+            print()
+            print("Generated safe controller timing used by this script:")
+            print("  No generated controller object was supplied.")
+        print("=" * 88)
+        print()
+        return
+
+    phases = list(controller.get("phases", []) or [])
+    green_duration = float(controller.get("green_duration", 0.0) or 0.0)
+    yellow_duration = float(T_YELLOW)
+    all_red_duration = float(T_ALL_RED)
+    transition_duration = yellow_duration + all_red_duration
+    cycle_duration = len(phases) * (green_duration + transition_duration)
+
+    print()
+    print("Generated safe controller timing used by this script:")
+    print(f"  Number of generated green phases: {len(phases)}")
+    print(f"  Green duration per generated phase: {green_duration:.1f}s")
+    print(f"  Yellow transition after a switch: {yellow_duration:.1f}s")
+    print(f"  All-red / clearance after yellow: {all_red_duration:.1f}s")
+    print(f"  Full generated cycle if fixed-cycle rotates all phases: {cycle_duration:.1f}s")
+    print()
+    for phase_i, phase in enumerate(phases):
+        slot = phase.get("slot", "?")
+        name = phase.get("name", "unnamed")
+        core_labels = ", ".join(phase.get("core_labels", []) or [])
+        print(
+            f"    generated phase {phase_i:02d}: slot={slot}, "
+            f"green={green_duration:6.1f}s, then yellow={yellow_duration:.1f}s + all_red={all_red_duration:.1f}s"
+        )
+        print(f"      name: {name}")
+        print(f"      core movements present: {core_labels or 'none'}")
+
+    print("=" * 88)
+    print()
+
+
 def build_all_fixed_controllers(rng, args):
     controllers = []
     skipped = []
@@ -3360,6 +4889,17 @@ def build_all_fixed_controllers(rng, args):
         controller["phase_elapsed"] = rng.uniform(0.0, controller["green_duration"])
 
         controllers.append(controller)
+
+    if PRINT_PHASE_LENGTH_DEBUG and PHASE_LENGTH_DEBUG_TLS_ID:
+        debug_controller = next(
+            (controller for controller in controllers if controller.get("tls_id") == PHASE_LENGTH_DEBUG_TLS_ID),
+            None,
+        )
+        print_phase_lengths_for_tls(
+            PHASE_LENGTH_DEBUG_TLS_ID,
+            controller=debug_controller,
+            skipped=(PHASE_LENGTH_DEBUG_TLS_ID in skipped),
+        )
 
     return controllers, skipped
 
@@ -3851,21 +5391,21 @@ def set_vehicle_route_for_approach_decision(
     args,
     recent_edges=None,
 ):
-    try:
-        route = list(traci.vehicle.getRoute(veh_id))
-        route_index = traci.vehicle.getRouteIndex(veh_id)
-    except traci.TraCIException:
-        return False
+    """Rewrite the upcoming route so the next intersection movement is balanced.
 
-    if route_index < 0 or route_index >= len(route):
-        route_prefix = [current_edge]
-    else:
-        route_prefix = [current_edge]
-
-    continuation_counts = Counter()
-
+    This intentionally overrides the OD fastest route near an intersection.  The
+    earlier strategy tried to fix one-way turning only by choosing different OD
+    endpoints.  That cannot fully work on a cropped map, because many distinct
+    endpoints can still share the same shortest-path bottleneck.  This function
+    gives the approaching vehicle a legal next edge chosen by the per-approach
+    S/R/L balancer, then builds a reasonable continuation from that edge.
+    """
     if outgoing_edge in HARDCODED_NO_CRUISE_LOOP_EDGES:
         return False
+    if outgoing_edge == previous_edge:
+        return False
+
+    continuation_counts = Counter()
 
     if outgoing_edge in raw_graph:
         continuation = build_random_walk_route(
@@ -3887,11 +5427,12 @@ def set_vehicle_route_for_approach_decision(
     if not continuation or continuation[0] != outgoing_edge:
         continuation = [outgoing_edge]
 
-    new_route = route_prefix + continuation
+    new_route = [current_edge] + continuation
 
-    # Remove accidental adjacent duplicates.
     cleaned = []
     for edge_id in new_route:
+        if not edge_id or edge_id.startswith(":"):
+            continue
         if cleaned and cleaned[-1] == edge_id:
             continue
         cleaned.append(edge_id)
@@ -3900,11 +5441,15 @@ def set_vehicle_route_for_approach_decision(
         return False
 
     try:
+        release_keep_clear_vehicle(veh_id)
+        safe_vehicle_set_speed(veh_id, -1)
+        release_route_lane_commitment(veh_id)
+        TRAFFIC_LIGHT_LANE_CHANGE_LOCKED_VEHICLES.discard(veh_id)
+        traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE)
         traci.vehicle.setRoute(veh_id, cleaned)
         return True
     except traci.TraCIException:
         return False
-
 
 def enforce_approach_target_lane(veh_id, target_lane_index, distance_to_end):
     try:
@@ -4018,10 +5563,14 @@ def apply_approach_turn_decision_to_vehicle(
 
     decision_options_by_group = loop_safe_options_by_group or options_by_group
 
+    # Balance turns separately for this incoming edge.  This is much stronger
+    # than global S/R/L balancing and directly targets the visual bug where one
+    # approach degenerates into all-left or all-right traffic.
+    edge_turn_counts = APPROACH_TURN_COUNTS_BY_EDGE[current_edge]
     movement = choose_turn_group(
         rng=rng,
         available_groups=decision_options_by_group,
-        turn_counts=APPROACH_TURN_COUNTS,
+        turn_counts=edge_turn_counts,
         strict_split=not args.disable_strict_split,
     )
 
@@ -4093,6 +5642,7 @@ def apply_approach_turn_decision_to_vehicle(
         return False
 
     APPROACH_TURN_COUNTS[movement] += 1
+    APPROACH_TURN_COUNTS_BY_EDGE[current_edge][movement] += 1
     APPROACH_TURN_DECISIONS[key] = {
         "movement": movement,
         "outgoing_edge": outgoing_edge,
@@ -4121,117 +5671,198 @@ def prune_approach_turn_decisions(active_ids):
             APPROACH_TURN_DECISIONS.pop(key, None)
 
 
+
 def apply_turn_lane_preference_to_vehicle(veh_id):
+    """Keep vehicles in route-compatible lanes without freezing them.
+
+    The vehicle keeps its actual OD/random-walk route.  This helper only tries
+    to put it into a lane that can serve the next routed edge.  If that becomes
+    impossible near the intersection, the route is rewritten to a legal outgoing
+    edge from the current lane so the vehicle clears the junction instead of
+    stopping forever.
+    """
     if is_ambulance(veh_id):
         return False
 
-    """
-    Nudge vehicles into better approach lanes without changing routes/signals.
-
-    Most important case:
-      - planned movement is straight
-      - current lane is shared right+straight
-      - another lane on this same incoming edge is straight-only
-
-    Then we request a lane change to the straight-only lane, so right-turning
-    vehicles are less likely to be blocked by straight-through vehicles.
-    """
     if not TURN_LANE_PREFERENCE_INDEX:
         return False
 
     try:
         lane_id = traci.vehicle.getLaneID(veh_id)
+        if not lane_id or lane_id.startswith(":"):
+            release_route_lane_commitment(veh_id)
+            return False
+
         speed = traci.vehicle.getSpeed(veh_id)
         waiting_time = traci.vehicle.getWaitingTime(veh_id)
         lane_pos = traci.vehicle.getLanePosition(veh_id)
-        lane_len = traci.lane.getLength(lane_id)
+        lane_len = cached_lane_length(lane_id)
     except traci.TraCIException:
+        release_route_lane_commitment(veh_id)
         return False
 
-    # Only do lane preference while the car is still moving and far enough
-    # upstream. If the vehicle is already queued near the intersection, forcing
-    # a lane change can block both lanes and create the deadlock seen in the GUI.
     distance_to_end = lane_len - lane_pos
-    no_change_buffer = traffic_light_no_lane_change_distance_for_lane(lane_id)
-
-    if speed < LANE_PREF_MIN_SPEED:
-        return False
-    if waiting_time > LANE_PREF_MAX_WAITING_TIME:
-        return False
-    if distance_to_end < LANE_PREF_MIN_DISTANCE_TO_END:
-        return False
-    if no_change_buffer > 0.0 and distance_to_end <= no_change_buffer:
-        return False
-
     current_edge = lane_to_edge(lane_id)
-
     if current_edge is None:
+        release_route_lane_commitment(veh_id)
         return False
+
+    if ROUTE_LANE_COMMITTED_EDGE.get(veh_id) not in (None, current_edge):
+        release_route_lane_commitment(veh_id)
 
     lane_info = TURN_LANE_PREFERENCE_INDEX.get(current_edge)
-
-    if not lane_info:
+    next_edge = planned_next_edge_for_vehicle(veh_id, current_edge)
+    if next_edge is None or next_edge.startswith(":"):
+        release_route_lane_commitment(veh_id)
         return False
-
-    outgoing_edge = planned_next_edge_for_vehicle(veh_id, current_edge)
-
-    if outgoing_edge is None:
-        return False
-
-    movement = lane_info["edge_to_movement"].get(outgoing_edge)
-
-    if movement not in TURN_PROBABILITIES:
-        return False
-
-    lane_to_movements = lane_info["lane_to_movements"]
-    current_movements = set(lane_to_movements.get(lane_id, set()))
-    preferred_lanes = target_lanes_for_movement(lane_info, outgoing_edge, movement)
-
-    if not preferred_lanes:
-        return False
-
-    # If the current lane is already one of the preferred lanes, do nothing.
-    if lane_id in preferred_lanes:
-        return False
-
-    # Avoid unnecessary lane changes. For straight vehicles, only force the
-    # change when a better straight-only/no-right lane exists. For right/left,
-    # only force if the current lane does not support that movement.
-    if movement == "S":
-        current_is_shared_right_straight = "S" in current_movements and "R" in current_movements
-        current_supports_straight = "S" in current_movements
-        preferred_has_true_straight_lane = any(
-            set(lane_to_movements.get(lane, set())) == {"S"}
-            for lane in preferred_lanes
-        )
-
-        if current_supports_straight and not current_is_shared_right_straight:
-            return False
-
-        if current_supports_straight and not preferred_has_true_straight_lane:
-            return False
-
-    elif movement in {"R", "L"}:
-        if movement in current_movements:
-            return False
 
     current_lane_index = lane_index_from_lane_id(lane_id)
-    target_lane_index = choose_best_target_lane(preferred_lanes, current_lane_index)
+    current_lane_can_take_route = lane_has_connection_to_edge(lane_id, next_edge)
 
+    # If this edge is not indexed but the current lane cannot serve the route,
+    # still run the emergency unblock fallback close to the junction.
+    if not lane_info:
+        if should_emergency_reroute_lane_block(
+            lane_id=lane_id,
+            next_edge=next_edge,
+            distance_to_end=distance_to_end,
+            speed=speed,
+            waiting_time=waiting_time,
+        ):
+            return emergency_reroute_vehicle_from_blocked_lane(
+                veh_id=veh_id,
+                current_edge=current_edge,
+                current_lane=lane_id,
+                blocked_next_edge=next_edge,
+            )
+        release_route_lane_commitment(veh_id)
+        return False
+
+    movement = lane_info["edge_to_movement"].get(next_edge)
+    if movement not in TURN_PROBABILITIES:
+        if should_emergency_reroute_lane_block(
+            lane_id=lane_id,
+            next_edge=next_edge,
+            distance_to_end=distance_to_end,
+            speed=speed,
+            waiting_time=waiting_time,
+        ):
+            return emergency_reroute_vehicle_from_blocked_lane(
+                veh_id=veh_id,
+                current_edge=current_edge,
+                current_lane=lane_id,
+                blocked_next_edge=next_edge,
+            )
+        release_route_lane_commitment(veh_id)
+        return False
+
+    preferred_lanes = target_lanes_for_movement(lane_info, next_edge, movement)
+    if not preferred_lanes:
+        if should_emergency_reroute_lane_block(
+            lane_id=lane_id,
+            next_edge=next_edge,
+            distance_to_end=distance_to_end,
+            speed=speed,
+            waiting_time=waiting_time,
+        ):
+            return emergency_reroute_vehicle_from_blocked_lane(
+                veh_id=veh_id,
+                current_edge=current_edge,
+                current_lane=lane_id,
+                blocked_next_edge=next_edge,
+                preferred_movement=movement,
+            )
+        release_route_lane_commitment(veh_id)
+        return False
+
+    no_change_buffer = traffic_light_no_lane_change_distance_for_lane(lane_id)
+    prep_distance = route_lane_prep_distance_for_lane(lane_id)
+
+    if prep_distance > 0.0 and distance_to_end > prep_distance:
+        release_route_lane_commitment(veh_id)
+        return False
+
+    current_is_preferred = lane_id in preferred_lanes
+
+    if current_is_preferred:
+        hold_distance = max(
+            no_change_buffer,
+            min(route_lane_prep_distance_for_lane(lane_id), ROUTE_LANE_COMMITMENT_HOLD_DISTANCE),
+        )
+        if distance_to_end <= hold_distance:
+            return set_route_lane_commitment_lock(veh_id, current_edge)
+        release_route_lane_commitment(veh_id)
+        return False
+
+    target_lane_index = choose_best_target_lane(preferred_lanes, current_lane_index)
     if target_lane_index is None or target_lane_index == current_lane_index:
+        if not current_lane_can_take_route and should_emergency_reroute_lane_block(
+            lane_id=lane_id,
+            next_edge=next_edge,
+            distance_to_end=distance_to_end,
+            speed=speed,
+            waiting_time=waiting_time,
+        ):
+            return emergency_reroute_vehicle_from_blocked_lane(
+                veh_id=veh_id,
+                current_edge=current_edge,
+                current_lane=lane_id,
+                blocked_next_edge=next_edge,
+                preferred_movement=movement,
+            )
         return False
 
     required_distance = required_lane_change_distance(current_lane_index, target_lane_index)
-    if no_change_buffer > 0.0 and distance_to_end <= no_change_buffer + required_distance:
+    too_late_or_stuck = (
+        (no_change_buffer > 0.0 and distance_to_end <= no_change_buffer + required_distance)
+        or distance_to_end < LANE_PREF_MIN_DISTANCE_TO_END
+        or speed < LANE_PREF_MIN_SPEED
+        or waiting_time > LANE_PREF_MAX_WAITING_TIME
+    )
+
+    if too_late_or_stuck:
+        if should_emergency_reroute_lane_block(
+            lane_id=lane_id,
+            next_edge=next_edge,
+            distance_to_end=distance_to_end,
+            speed=speed,
+            waiting_time=waiting_time,
+            no_change_buffer=no_change_buffer,
+            required_distance=required_distance,
+        ):
+            return emergency_reroute_vehicle_from_blocked_lane(
+                veh_id=veh_id,
+                current_edge=current_edge,
+                current_lane=lane_id,
+                blocked_next_edge=next_edge,
+                preferred_movement=movement,
+            )
         return False
 
     try:
+        release_keep_clear_vehicle(veh_id)
+        safe_vehicle_set_speed(veh_id, -1)
         traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE)
         traci.vehicle.changeLane(veh_id, target_lane_index, TURN_LANE_CHANGE_DURATION)
         return True
     except traci.TraCIException:
+        if not current_lane_can_take_route and should_emergency_reroute_lane_block(
+            lane_id=lane_id,
+            next_edge=next_edge,
+            distance_to_end=distance_to_end,
+            speed=speed,
+            waiting_time=waiting_time,
+            no_change_buffer=no_change_buffer,
+            required_distance=required_distance,
+        ):
+            return emergency_reroute_vehicle_from_blocked_lane(
+                veh_id=veh_id,
+                current_edge=current_edge,
+                current_lane=lane_id,
+                blocked_next_edge=next_edge,
+                preferred_movement=movement,
+            )
         return False
-
 
 def apply_turn_lane_preference_to_all_vehicles():
     changed = 0
@@ -4239,12 +5870,14 @@ def apply_turn_lane_preference_to_all_vehicles():
     if not TURN_LANE_PREFERENCE_INDEX:
         return changed
 
-    for veh_id in list(traci.vehicle.getIDList()):
+    active_ids = list(traci.vehicle.getIDList())
+    cleanup_route_lane_commitment_locks(active_ids)
+
+    for veh_id in active_ids:
         if apply_turn_lane_preference_to_vehicle(veh_id):
             changed += 1
 
     return changed
-
 
 def cleanup_lane_balance_tracking(active_ids):
     """Remove stale lane-balance cooldown entries for vehicles that left SUMO."""
@@ -4254,8 +5887,9 @@ def cleanup_lane_balance_tracking(active_ids):
             LANE_BALANCE_LAST_CHANGE.pop(veh_id, None)
 
 
+
 def lane_balance_candidate_lanes(current_edge, next_edge):
-    """Lanes on current_edge that can legally serve the vehicle's next edge."""
+    """Only balance among lanes that can legally serve the vehicle's next edge."""
     if not current_edge or not next_edge:
         return []
 
@@ -4263,15 +5897,10 @@ def lane_balance_candidate_lanes(current_edge, next_edge):
     if len(candidates) >= LANE_BALANCE_MIN_EDGE_LANES:
         return candidates
 
-    # If SUMO does not expose a clean next-edge lane-link set, fall back to all
-    # lanes on the edge. This keeps the helper useful on ordinary multi-lane
-    # road sections, but the main path above is stricter and safer.
-    lanes = list(cached_edge_lanes(current_edge))
-    if len(lanes) >= LANE_BALANCE_MIN_EDGE_LANES:
-        return lanes
-
+    # Strict route-lane mode: do not fall back to all lanes. That fallback can
+    # make traffic look smoother, but it can also move cars into lanes that do
+    # not match their next routed turn/straight movement.
     return []
-
 
 def choose_lane_balance_target(current_lane, candidate_lanes):
     """Choose a nearby underused lane, or None if lanes are already balanced."""
@@ -4316,8 +5945,9 @@ def choose_lane_balance_target(current_lane, candidate_lanes):
     return target_lane_index
 
 
+
 def apply_lane_balancing_to_vehicle(veh_id):
-    """Gently spread cruising traffic across usable lanes on multi-lane roads."""
+    """Gently spread cruising traffic, but never inside the route-lane prep zone."""
     if is_ambulance(veh_id):
         return False
 
@@ -4347,8 +5977,13 @@ def apply_lane_balancing_to_vehicle(veh_id):
 
     distance_to_end = lane_len - lane_pos
 
-    # Only balance free-flowing mid-road traffic. Near intersections, the
-    # approach-decision and turn-lane-preference logic should remain in charge.
+    # Once the route-lane preparation zone begins, the route-specific lane
+    # commitment helper is in charge. Lane balancing must not move vehicles away
+    # from lanes needed for the next turn/straight movement.
+    prep_distance = route_lane_prep_distance_for_lane(lane_id)
+    if prep_distance > 0.0 and distance_to_end <= prep_distance:
+        return False
+
     no_change_buffer = traffic_light_no_lane_change_distance_for_lane(lane_id)
 
     if lane_pos < LANE_BALANCE_MIN_DISTANCE_FROM_START:
@@ -4381,16 +6016,12 @@ def apply_lane_balancing_to_vehicle(veh_id):
         return False
 
     try:
-        # Mode 1621 preserves SUMO safety/collision checks while allowing a
-        # script-requested lane change. It is already used by the unconnected
-        # lane rescue in this file, so this keeps behavior consistent.
         traci.vehicle.setLaneChangeMode(veh_id, TRAFFIC_LIGHT_NORMAL_LANE_CHANGE_MODE)
         traci.vehicle.changeLane(veh_id, target_lane_index, LANE_BALANCE_CHANGE_DURATION)
         LANE_BALANCE_LAST_CHANGE[veh_id] = now
         return True
     except traci.TraCIException:
         return False
-
 
 def apply_lane_balancing_to_all_vehicles():
     changed = 0
@@ -4414,25 +6045,31 @@ def choose_turn_group(rng, available_groups, turn_counts, strict_split=True):
     if not groups:
         return None
 
+    if len(groups) == 1:
+        return groups[0]
+
+    # Deficit-based balancing.  The older weighted-random choice could still
+    # allow long streaks of the same movement.  For per-approach balancing we
+    # want the movement whose count is most below its target among the movements
+    # that are actually legal on this approach.
     if strict_split:
-        total_after = sum(turn_counts.values()) + 1
-        deficits = {}
+        current_total = sum(turn_counts[group] for group in groups)
+        total_after = current_total + 1
+        target_total = sum(TURN_PROBABILITIES[group] for group in groups)
+        deficits = []
 
         for group in groups:
-            target_count = TURN_PROBABILITIES[group] * total_after
-            deficits[group] = max(0.0, target_count - turn_counts[group])
+            normalized_target = TURN_PROBABILITIES[group] / max(1e-9, target_total)
+            desired_after = normalized_target * total_after
+            deficit = desired_after - turn_counts[group]
+            # Small random jitter only breaks exact ties; it does not dominate
+            # the deficit.  This prevents deterministic lane starvation while
+            # still fixing one-way streaks.
+            deficits.append((deficit + 1e-6 * rng.random(), group))
 
-        deficit_total = sum(deficits.values())
-
-        if deficit_total > 0:
-            r = rng.random() * deficit_total
-            cumulative = 0.0
-
-            for group in groups:
-                cumulative += deficits[group]
-
-                if r <= cumulative:
-                    return group
+        deficits.sort(reverse=True)
+        if deficits[0][0] > -0.25:
+            return deficits[0][1]
 
     total_weight = sum(TURN_PROBABILITIES[group] for group in groups)
     r = rng.random() * total_weight
@@ -4446,12 +6083,6 @@ def choose_turn_group(rng, available_groups, turn_counts, strict_split=True):
 
     return groups[-1]
 
-
-# ============================================================
-# Random-walk route generation
-# ============================================================
-
-@lru_cache(maxsize=None)
 def classify_edge_successor_movement(current_edge, next_edge):
     """
     Classify next_edge as S/L/R relative to current_edge.
@@ -4988,6 +6619,13 @@ def spawn_vehicle(
 
             if not route_edges:
                 sim_state["od_route_failures"] = sim_state.get("od_route_failures", 0) + 1
+                if OD_LOCAL_ENDPOINTS_ONLY and OD_LOCAL_ENDPOINTS_DISABLE_RANDOM_WALK_FALLBACK:
+                    # Strict guarantee: normal passenger vehicles should never
+                    # fall back to a random-walk route whose final edge may be
+                    # non-local.  Skip this spawn attempt and try another
+                    # local-to-local OD pair instead.
+                    continue
+
                 if not args.od_random_walk_fallback:
                     continue
 
@@ -5009,6 +6647,8 @@ def spawn_vehicle(
             if od_info is not None:
                 sim_state.setdefault("od_trip_counts", Counter())[od_info.get("trip_type", "unknown")] += 1
                 sim_state.setdefault("od_movement_counts", Counter()).update(count_route_movements(route_edges))
+                record_od_route_approach_movements(sim_state, route_edges)
+                record_od_edge_movement_counts(route_edges, sim_state, raw_graph)
 
         else:
             route_edges = build_random_walk_route(
@@ -5045,6 +6685,19 @@ def spawn_vehicle(
                 departSpeed="max",
             )
 
+            register_active_od_destination_vehicle(
+                sim_state=sim_state,
+                veh_id=veh_id,
+                route_edges=route_edges,
+                context=sim_state.get("od_context"),
+            )
+            register_active_od_approach_balance_vehicle(
+                sim_state=sim_state,
+                veh_id=veh_id,
+                route_edges=route_edges,
+                raw_graph=raw_graph,
+            )
+
             return True
 
         except traci.TraCIException:
@@ -5066,6 +6719,8 @@ def fill_vehicle_population(
     turn_counts,
     args,
 ):
+    cleanup_active_od_destination_tracking(sim_state)
+    cleanup_active_od_approach_balance_tracking(sim_state)
     active = traci.vehicle.getIDCount()
     need = max(0, target_count - active)
     spawn_count = min(need, max_to_spawn)
@@ -5382,6 +7037,738 @@ def update_ambulances(sim_state, raw_graph, edge_metadata, rng, sim_time, args):
 # Simulation loop
 # ============================================================
 
+
+# ---------------------------------------------------------------------------
+# Target intersection turn-direction monitor
+# ---------------------------------------------------------------------------
+from collections import Counter as _TurnMonitorCounter
+from collections import defaultdict as _TurnMonitorDefaultDict
+
+# No hardcoded target/anchor TLS in the simulation file.
+# The old one-intersection turn monitor is disabled by default.
+TARGET_TURN_MONITOR_TLS = None
+TARGET_TURN_MONITOR_APPROACH_DISTANCE = 150.0
+TARGET_TURN_MONITOR_PRINT_INTERVAL = 30.0
+
+_TARGET_TURN_MONITOR_SEEN = set()
+_TARGET_TURN_MONITOR_COUNTS = _TurnMonitorDefaultDict(_TurnMonitorCounter)
+_TARGET_TURN_MONITOR_WRONG_LANE = _TurnMonitorDefaultDict(_TurnMonitorCounter)
+_TARGET_TURN_MONITOR_LAST_PRINT = -10**18
+_TARGET_TURN_MONITOR_LINK_CACHE = None
+_TARGET_TURN_MONITOR_WARNED = False
+
+
+def _tm_lane_to_edge(lane_id):
+    if not lane_id or lane_id.startswith(":"):
+        return None
+    if "_" not in lane_id:
+        return lane_id
+    return lane_id.rsplit("_", 1)[0]
+
+
+def _tm_extract_sumo_direction(link):
+    # SUMO link tuples vary slightly by API/version. The direction is usually
+    # one of s/l/r/t, but this searches robustly instead of assuming an index.
+    for item in link:
+        if isinstance(item, str) and item in {"s", "S", "l", "L", "r", "R", "t", "T"}:
+            if item.lower() == "s":
+                return "straight"
+            if item.lower() == "l":
+                return "left"
+            if item.lower() == "r":
+                return "right"
+            return "turnaround"
+    return None
+
+
+def _tm_lane_shape_vector(lane_id, at_end=True):
+    try:
+        shape = traci.lane.getShape(lane_id)
+    except Exception:
+        return None
+
+    if len(shape) < 2:
+        return None
+
+    if at_end:
+        x1, y1 = shape[-2]
+        x2, y2 = shape[-1]
+    else:
+        x1, y1 = shape[0]
+        x2, y2 = shape[1]
+
+    dx = x2 - x1
+    dy = y2 - y1
+    norm = (dx * dx + dy * dy) ** 0.5
+    if norm <= 1e-9:
+        return None
+
+    return dx / norm, dy / norm
+
+
+def _tm_approach_direction_from_lane(lane_id):
+    vec = _tm_lane_shape_vector(lane_id, at_end=True)
+    if vec is None:
+        return "unknown"
+
+    dx, dy = vec
+
+    # This is the side the car is coming FROM, not the direction it is traveling.
+    if abs(dx) >= abs(dy):
+        return "from_west" if dx > 0 else "from_east"
+    return "from_south" if dy > 0 else "from_north"
+
+
+def _tm_geometry_movement(in_lane, out_lane):
+    vin = _tm_lane_shape_vector(in_lane, at_end=True)
+    vout = _tm_lane_shape_vector(out_lane, at_end=False)
+
+    if vin is None or vout is None:
+        return "unknown"
+
+    x1, y1 = vin
+    x2, y2 = vout
+
+    dot = max(-1.0, min(1.0, x1 * x2 + y1 * y2))
+    cross = x1 * y2 - y1 * x2
+
+    import math
+    angle = math.degrees(math.acos(dot))
+
+    if angle <= 35.0:
+        return "straight"
+    if angle >= 145.0:
+        return "turnaround"
+    return "left" if cross > 0 else "right"
+
+
+def _tm_target_links():
+    global _TARGET_TURN_MONITOR_LINK_CACHE, _TARGET_TURN_MONITOR_WARNED
+
+    if _TARGET_TURN_MONITOR_LINK_CACHE is not None:
+        return _TARGET_TURN_MONITOR_LINK_CACHE
+
+    incoming_lanes = set()
+    lane_to_out_edges = _TurnMonitorDefaultDict(set)
+    lane_to_out_lanes = _TurnMonitorDefaultDict(list)
+    edge_to_in_lanes = _TurnMonitorDefaultDict(set)
+
+    if TARGET_TURN_MONITOR_TLS is None:
+        _TARGET_TURN_MONITOR_LINK_CACHE = (
+            incoming_lanes,
+            lane_to_out_edges,
+            lane_to_out_lanes,
+            edge_to_in_lanes,
+        )
+        return _TARGET_TURN_MONITOR_LINK_CACHE
+
+    try:
+        controlled = traci.trafficlight.getControlledLinks(TARGET_TURN_MONITOR_TLS)
+    except Exception:
+        if not _TARGET_TURN_MONITOR_WARNED:
+            print(
+                f"[target-turn-monitor] WARNING: could not find traffic light "
+                f"{TARGET_TURN_MONITOR_TLS!r}",
+                flush=True,
+            )
+            _TARGET_TURN_MONITOR_WARNED = True
+        _TARGET_TURN_MONITOR_LINK_CACHE = (
+            incoming_lanes,
+            lane_to_out_edges,
+            lane_to_out_lanes,
+            edge_to_in_lanes,
+        )
+        return _TARGET_TURN_MONITOR_LINK_CACHE
+
+    for signal_links in controlled:
+        for link in signal_links:
+            if len(link) < 2:
+                continue
+
+            in_lane = link[0]
+            out_lane = link[1]
+
+            if not in_lane or not out_lane:
+                continue
+
+            out_edge = _tm_lane_to_edge(out_lane)
+            in_edge = _tm_lane_to_edge(in_lane)
+
+            if not out_edge or not in_edge:
+                continue
+
+            incoming_lanes.add(in_lane)
+            lane_to_out_edges[in_lane].add(out_edge)
+            lane_to_out_lanes[in_lane].append(out_lane)
+            edge_to_in_lanes[in_edge].add(in_lane)
+
+    _TARGET_TURN_MONITOR_LINK_CACHE = (
+        incoming_lanes,
+        lane_to_out_edges,
+        lane_to_out_lanes,
+        edge_to_in_lanes,
+    )
+    return _TARGET_TURN_MONITOR_LINK_CACHE
+
+
+def _tm_planned_next_edge(veh_id, current_edge):
+    try:
+        route = list(traci.vehicle.getRoute(veh_id))
+        idx = int(traci.vehicle.getRouteIndex(veh_id))
+    except Exception:
+        return None
+
+    if not route:
+        return None
+
+    if idx < 0 or idx >= len(route):
+        try:
+            idx = route.index(current_edge)
+        except ValueError:
+            idx = -1
+
+    for j in range(idx + 1, len(route)):
+        edge = route[j]
+        if edge and edge != current_edge and not edge.startswith(":"):
+            return edge
+
+    return None
+
+
+def _tm_movement_from_lane_to_edge(in_lane, next_edge):
+    try:
+        links = traci.lane.getLinks(in_lane)
+    except Exception:
+        return "unknown"
+
+    for link in links:
+        if len(link) < 1:
+            continue
+
+        out_lane = link[0]
+        if _tm_lane_to_edge(out_lane) != next_edge:
+            continue
+
+        movement = _tm_extract_sumo_direction(link)
+        if movement is not None:
+            return movement
+
+        return _tm_geometry_movement(in_lane, out_lane)
+
+    return "unknown"
+
+
+def _tm_movement_for_vehicle(in_lane, current_edge, next_edge, edge_to_in_lanes):
+    # First try the actual lane the car is currently in.
+    movement = _tm_movement_from_lane_to_edge(in_lane, next_edge)
+    if movement != "unknown":
+        return movement
+
+    # If the car is in the wrong lane, classify the intended movement using
+    # another lane from the same approach edge that can reach the planned next edge.
+    for alt_lane in edge_to_in_lanes.get(current_edge, ()):
+        movement = _tm_movement_from_lane_to_edge(alt_lane, next_edge)
+        if movement != "unknown":
+            return movement
+
+    return "unknown"
+
+
+def _tm_print_turn_monitor(force=False):
+    global _TARGET_TURN_MONITOR_LAST_PRINT
+
+    try:
+        now = float(traci.simulation.getTime())
+    except Exception:
+        now = 0.0
+
+    if not force and now - _TARGET_TURN_MONITOR_LAST_PRINT < TARGET_TURN_MONITOR_PRINT_INTERVAL:
+        return
+
+    total_seen = sum(c["total"] for c in _TARGET_TURN_MONITOR_COUNTS.values())
+    if total_seen <= 0:
+        return
+
+    _TARGET_TURN_MONITOR_LAST_PRINT = now
+
+    print(
+        f"\n[target-turn-monitor] t={now:.1f}s "
+        f"tls={TARGET_TURN_MONITOR_TLS} total_counted={total_seen}",
+        flush=True,
+    )
+
+    print(
+        "  approach      n   left_n  left_%   straight_n  straight_%   right_n  right_%   unknown_n  unknown_%   wrong_lane_n  wrong_lane_%",
+        flush=True,
+    )
+
+    # Keep this as from_north only because you patched the monitor that way earlier.
+    # Change this list to include from_east/from_south/from_west if needed.
+    for approach in ["from_north"]:
+        c = _TARGET_TURN_MONITOR_COUNTS.get(approach)
+        if not c or c["total"] <= 0:
+            continue
+
+        n = c["total"]
+
+        left_n = c["left"]
+        straight_n = c["straight"]
+        right_n = c["right"]
+        unknown_n = c["unknown"]
+        wrong_n = _TARGET_TURN_MONITOR_WRONG_LANE[approach]["total"]
+
+        left_pct = 100.0 * left_n / n
+        straight_pct = 100.0 * straight_n / n
+        right_pct = 100.0 * right_n / n
+        unknown_pct = 100.0 * unknown_n / n
+        wrong_pct = 100.0 * wrong_n / n
+
+        print(
+            f"  {approach:<11} {n:4d} "
+            f"{left_n:8d} {left_pct:7.1f}% "
+            f"{straight_n:12d} {straight_pct:10.1f}% "
+            f"{right_n:9d} {right_pct:7.1f}% "
+            f"{unknown_n:10d} {unknown_pct:9.1f}% "
+            f"{wrong_n:13d} {wrong_pct:11.1f}%",
+            flush=True,
+        )
+
+    print("", flush=True)
+
+_TARGET_TURN_MONITOR_FROM_NORTH_30M_SEEN = set()
+
+
+def _tm_safe(fn, default="NA"):
+    try:
+        return fn()
+    except Exception:
+        return default
+
+
+def _tm_fmt(x, digits=2):
+    if isinstance(x, float):
+        return f"{x:.{digits}f}"
+    return str(x)
+
+
+def _tm_route_context(veh_id, current_edge):
+    try:
+        route = list(traci.vehicle.getRoute(veh_id))
+        route_index = int(traci.vehicle.getRouteIndex(veh_id))
+    except Exception:
+        return [], -1, "NA", "NA", "NA", "NA", []
+
+    if not route:
+        return [], -1, "NA", "NA", "NA", "NA", []
+
+    if route_index < 0 or route_index >= len(route):
+        try:
+            route_index = route.index(current_edge)
+        except ValueError:
+            route_index = -1
+
+    route_origin = route[0]
+    route_destination = route[-1]
+
+    previous_edge = "None"
+    if route_index > 0:
+        previous_edge = route[route_index - 1]
+
+    next_edge = _tm_planned_next_edge(veh_id, current_edge) or "None"
+
+    if route_index >= 0:
+        remaining_route = route[route_index: route_index + 10]
+    else:
+        remaining_route = route[:10]
+
+    return route, route_index, route_origin, previous_edge, next_edge, route_destination, remaining_route
+
+
+def _turn_monitor_after_simulation_step():
+    return
+    """Event monitor.
+
+    Only watches from_north vehicles approaching the target TLS.
+    Prints once when each vehicle first enters the final 30m zone.
+    """
+    try:
+        (
+            incoming_lanes,
+            lane_to_out_edges,
+            _lane_to_out_lanes,
+            edge_to_in_lanes,
+        ) = _tm_target_links()
+
+        if not incoming_lanes:
+            return
+
+        for veh_id in traci.vehicle.getIDList():
+            if veh_id in _TARGET_TURN_MONITOR_FROM_NORTH_30M_SEEN:
+                continue
+
+            lane_id = _tm_safe(lambda: traci.vehicle.getLaneID(veh_id), "")
+            if lane_id not in incoming_lanes:
+                continue
+
+            approach = _tm_approach_direction_from_lane(lane_id)
+            if approach != "from_north":
+                continue
+
+            lane_len = _tm_safe(lambda: float(traci.lane.getLength(lane_id)), None)
+            lane_pos = _tm_safe(lambda: float(traci.vehicle.getLanePosition(veh_id)), None)
+
+            if lane_len is None or lane_pos is None:
+                continue
+
+            dist_to_intersection = lane_len - lane_pos
+
+            if dist_to_intersection < 0.0 or dist_to_intersection > 30.0:
+                continue
+
+            current_edge = _tm_safe(lambda: traci.vehicle.getRoadID(veh_id), "NA")
+            route, route_index, route_origin, previous_edge, next_edge, route_destination, remaining_route = _tm_route_context(
+                veh_id,
+                current_edge,
+            )
+
+            movement = "unknown"
+            if next_edge != "None":
+                movement = _tm_movement_for_vehicle(
+                    lane_id,
+                    current_edge,
+                    next_edge,
+                    edge_to_in_lanes,
+                )
+                if movement not in {"left", "straight", "right"}:
+                    movement = "unknown"
+
+            lane_can_reach_next = False
+            wrong_lane = False
+            if next_edge != "None":
+                lane_can_reach_next = next_edge in lane_to_out_edges.get(lane_id, set())
+                wrong_lane = not lane_can_reach_next
+
+            now = _tm_safe(lambda: float(traci.simulation.getTime()), 0.0)
+
+            speed = _tm_safe(lambda: float(traci.vehicle.getSpeed(veh_id)), "NA")
+            speed_mph = speed * 2.2369362920544 if isinstance(speed, float) else "NA"
+            accel = _tm_safe(lambda: float(traci.vehicle.getAcceleration(veh_id)), "NA")
+            allowed_speed = _tm_safe(lambda: float(traci.vehicle.getAllowedSpeed(veh_id)), "NA")
+            max_speed = _tm_safe(lambda: float(traci.vehicle.getMaxSpeed(veh_id)), "NA")
+            waiting_time = _tm_safe(lambda: float(traci.vehicle.getWaitingTime(veh_id)), "NA")
+            accumulated_wait = _tm_safe(lambda: float(traci.vehicle.getAccumulatedWaitingTime(veh_id)), "NA")
+            type_id = _tm_safe(lambda: traci.vehicle.getTypeID(veh_id), "NA")
+            length = _tm_safe(lambda: float(traci.vehicle.getLength(veh_id)), "NA")
+            width = _tm_safe(lambda: float(traci.vehicle.getWidth(veh_id)), "NA")
+            angle = _tm_safe(lambda: float(traci.vehicle.getAngle(veh_id)), "NA")
+            pos = _tm_safe(lambda: traci.vehicle.getPosition(veh_id), ("NA", "NA"))
+
+            lane_change_mode = _tm_safe(lambda: traci.vehicle.getLaneChangeMode(veh_id), "NA")
+            speed_mode = _tm_safe(lambda: traci.vehicle.getSpeedMode(veh_id), "NA")
+
+            leader = _tm_safe(lambda: traci.vehicle.getLeader(veh_id, 100.0), None)
+            if leader is None:
+                leader_id = "None"
+                leader_gap = "NA"
+            else:
+                leader_id = leader[0]
+                leader_gap = leader[1]
+
+            next_tls_list = _tm_safe(lambda: traci.vehicle.getNextTLS(veh_id), [])
+            target_tls_info = None
+            for item in next_tls_list:
+                if len(item) >= 4 and item[0] == TARGET_TURN_MONITOR_TLS:
+                    target_tls_info = item
+                    break
+
+            if target_tls_info is None:
+                tls_id = "None"
+                tls_link_index = "NA"
+                tls_dist = "NA"
+                tls_state = "NA"
+            else:
+                tls_id = target_tls_info[0]
+                tls_link_index = target_tls_info[1]
+                tls_dist = target_tls_info[2]
+                tls_state = target_tls_info[3]
+
+            route_remaining_str = " -> ".join(remaining_route)
+
+            _TARGET_TURN_MONITOR_FROM_NORTH_30M_SEEN.add(veh_id)
+
+            print(
+                f"\n[from_north-30m-detail] t={now:.1f}s car entered final 30m of target intersection",
+                flush=True,
+            )
+            print(f"  car_id={veh_id}", flush=True)
+            print(f"  planned_turn={movement}", flush=True)
+            print(
+                f"  came_from: approach={approach}, route_origin={route_origin}, "
+                f"previous_edge={previous_edge}, current_edge={current_edge}, lane_id={lane_id}",
+                flush=True,
+            )
+            print(
+                f"  will_end_up: next_edge={next_edge}, route_destination={route_destination}, "
+                f"route_index={route_index}, route_len={len(route)}, remaining_edges={max(0, len(route) - max(route_index, 0))}",
+                flush=True,
+            )
+            print(
+                f"  lane_validity: lane_can_reach_next={lane_can_reach_next}, wrong_lane={wrong_lane}",
+                flush=True,
+            )
+            print(
+                f"  position: dist_to_intersection={_tm_fmt(dist_to_intersection)}m, "
+                f"lane_pos={_tm_fmt(lane_pos)}m, lane_len={_tm_fmt(lane_len)}m, "
+                f"x={_tm_fmt(pos[0])}, y={_tm_fmt(pos[1])}, angle={_tm_fmt(angle)}",
+                flush=True,
+            )
+            print(
+                f"  motion: speed={_tm_fmt(speed)}m/s, speed_mph={_tm_fmt(speed_mph)}mph, "
+                f"accel={_tm_fmt(accel)}m/s^2, allowed_speed={_tm_fmt(allowed_speed)}m/s, "
+                f"max_speed={_tm_fmt(max_speed)}m/s",
+                flush=True,
+            )
+            print(
+                f"  waiting: waiting_time={_tm_fmt(waiting_time)}s, "
+                f"accumulated_wait={_tm_fmt(accumulated_wait)}s",
+                flush=True,
+            )
+            print(
+                f"  vehicle: type={type_id}, length={_tm_fmt(length)}m, width={_tm_fmt(width)}m, "
+                f"lane_change_mode={lane_change_mode}, speed_mode={speed_mode}",
+                flush=True,
+            )
+            print(
+                f"  leader: leader_id={leader_id}, leader_gap={_tm_fmt(leader_gap)}m",
+                flush=True,
+            )
+            print(
+                f"  traffic_light: tls_id={tls_id}, tls_link_index={tls_link_index}, "
+                f"tls_dist={_tm_fmt(tls_dist)}m, tls_state={tls_state}",
+                flush=True,
+            )
+            print(f"  route_remaining_sample: {route_remaining_str}", flush=True)
+            print("", flush=True)
+
+    except Exception as exc:
+        print(f"[from_north-30m-detail] WARNING: monitor failed: {exc}", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Spawn/destination GUI markers
+# ---------------------------------------------------------------------------
+# Blue filled circle = vehicle spawn point.
+# Red filled circle = vehicle destination point.
+# Circles are removed when the vehicle disappears from the simulation.
+
+SPAWN_DESTINATION_MARKERS_ENABLED = False
+SPAWN_DESTINATION_MARKER_RADIUS = 11.0
+SPAWN_DESTINATION_MARKER_SEGMENTS = 20
+SPAWN_DESTINATION_MARKER_LAYER = 250
+
+_SPAWN_DESTINATION_MARKERS = {}
+
+
+def reset_spawn_destination_markers():
+    _SPAWN_DESTINATION_MARKERS.clear()
+
+
+def _sdm_poly_id(veh_id, kind):
+    safe = str(veh_id).replace(" ", "_").replace("/", "_").replace(":", "_")
+    return f"sdm_{kind}_{safe}"
+
+
+def _sdm_circle_shape(x, y, radius=SPAWN_DESTINATION_MARKER_RADIUS):
+    import math
+
+    points = []
+    n = max(8, int(SPAWN_DESTINATION_MARKER_SEGMENTS))
+
+    for i in range(n):
+        a = 2.0 * math.pi * i / n
+        points.append((x + radius * math.cos(a), y + radius * math.sin(a)))
+
+    return points
+
+
+def _sdm_remove_polygon(poly_id):
+    try:
+        traci.polygon.remove(poly_id)
+    except Exception:
+        pass
+
+
+def _sdm_add_filled_circle(poly_id, x, y, color):
+    # Replace if it already exists.
+    _sdm_remove_polygon(poly_id)
+
+    try:
+        traci.polygon.add(
+            poly_id,
+            _sdm_circle_shape(float(x), float(y)),
+            color,
+            fill=True,
+            polygonType="spawn_destination_marker",
+            layer=SPAWN_DESTINATION_MARKER_LAYER,
+            lineWidth=1,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _sdm_edge_lane_shape(edge_id):
+    if not edge_id or str(edge_id).startswith(":"):
+        return None
+
+    # Preferred method: ask SUMO how many lanes the edge has.
+    try:
+        lane_count = int(traci.edge.getLaneNumber(edge_id))
+        for i in range(lane_count):
+            lane_id = f"{edge_id}_{i}"
+            try:
+                shape = traci.lane.getShape(lane_id)
+                if shape:
+                    return shape
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Fallback: try common lane IDs.
+    for i in range(10):
+        lane_id = f"{edge_id}_{i}"
+        try:
+            shape = traci.lane.getShape(lane_id)
+            if shape:
+                return shape
+        except Exception:
+            continue
+
+    return None
+
+
+def _sdm_edge_endpoint(edge_id):
+    shape = _sdm_edge_lane_shape(edge_id)
+    if not shape:
+        return None
+
+    # The end of the final route edge is where the vehicle should disappear.
+    return shape[-1]
+
+
+def _sdm_current_vehicle_position(veh_id):
+    try:
+        return traci.vehicle.getPosition(veh_id)
+    except Exception:
+        return None
+
+
+def _sdm_current_destination_edge(veh_id):
+    try:
+        route = list(traci.vehicle.getRoute(veh_id))
+    except Exception:
+        return None
+
+    if not route:
+        return None
+
+    # Last non-internal edge in the current route.
+    for edge_id in reversed(route):
+        if edge_id and not str(edge_id).startswith(":"):
+            return edge_id
+
+    return None
+
+
+def _sdm_add_markers_for_vehicle(veh_id):
+    spawn_pos = _sdm_current_vehicle_position(veh_id)
+    if spawn_pos is None:
+        return
+
+    dest_edge = _sdm_current_destination_edge(veh_id)
+    if dest_edge is None:
+        return
+
+    dest_pos = _sdm_edge_endpoint(dest_edge)
+    if dest_pos is None:
+        return
+
+    spawn_id = _sdm_poly_id(veh_id, "spawn")
+    dest_id = _sdm_poly_id(veh_id, "dest")
+
+    sx, sy = spawn_pos
+    dx, dy = dest_pos
+
+    # RGBA colors.
+    blue = (0, 80, 255, 230)
+    red = (255, 30, 30, 230)
+
+    _sdm_add_filled_circle(spawn_id, sx, sy, blue)
+    _sdm_add_filled_circle(dest_id, dx, dy, red)
+
+    _SPAWN_DESTINATION_MARKERS[veh_id] = {
+        "spawn_id": spawn_id,
+        "dest_id": dest_id,
+        "dest_edge": dest_edge,
+    }
+
+
+def _sdm_update_destination_marker_if_route_changed(veh_id):
+    record = _SPAWN_DESTINATION_MARKERS.get(veh_id)
+    if not record:
+        return
+
+    dest_edge = _sdm_current_destination_edge(veh_id)
+    if dest_edge is None:
+        return
+
+    if dest_edge == record.get("dest_edge"):
+        return
+
+    dest_pos = _sdm_edge_endpoint(dest_edge)
+    if dest_pos is None:
+        return
+
+    dx, dy = dest_pos
+    red = (255, 30, 30, 230)
+
+    _sdm_add_filled_circle(record["dest_id"], dx, dy, red)
+    record["dest_edge"] = dest_edge
+
+
+def _sdm_remove_markers_for_vehicle(veh_id):
+    record = _SPAWN_DESTINATION_MARKERS.pop(veh_id, None)
+    if not record:
+        return
+
+    _sdm_remove_polygon(record.get("spawn_id"))
+    _sdm_remove_polygon(record.get("dest_id"))
+
+
+def _vehicle_spawn_destination_marker_after_simulation_step():
+    if not SPAWN_DESTINATION_MARKERS_ENABLED:
+        return
+
+    try:
+        active_ids = set(traci.vehicle.getIDList())
+    except Exception:
+        return
+
+    # Remove markers for vehicles that arrived, teleported away, or disappeared.
+    for old_id in list(_SPAWN_DESTINATION_MARKERS):
+        if old_id not in active_ids:
+            _sdm_remove_markers_for_vehicle(old_id)
+
+    # Add markers for newly spawned vehicles.
+    for veh_id in active_ids:
+        if veh_id not in _SPAWN_DESTINATION_MARKERS:
+            _sdm_add_markers_for_vehicle(veh_id)
+        else:
+            # If your rescue/reroute logic changes the final route edge, move
+            # the red marker to the new current destination.
+            _sdm_update_destination_marker_if_route_changed(veh_id)
+
 def run_simulation_steps(
     num_steps,
     controllers,
@@ -5400,10 +7787,12 @@ def run_simulation_steps(
     extended_total = 0
     recovered_total = 0
 
-    # Expensive Python/TraCI work happens once per DECISION_INTERVAL, not once per SUMO step.
-    # This keeps the same broad multi-region behavior while avoiding a full vehicle scan
-    # every 0.5/1.0 simulation seconds.
-    if traci.vehicle.getIDCount() < args.target_vehicles:
+    # Fast mode: run expensive Python/TraCI vehicle scans on timers instead of
+    # repeating several full-map passes every simulated second. This is the main
+    # speed fix for 500-2000 car GUI runs.
+    now0 = current_sim_time()
+
+    if traci.vehicle.getIDCount() < args.target_vehicles and now0 >= sim_state.get("next_population_fill_time", 0.0):
         spawned_total += fill_vehicle_population(
             sim_state=sim_state,
             target_count=args.target_vehicles,
@@ -5417,87 +7806,80 @@ def run_simulation_steps(
             turn_counts=turn_counts,
             args=args,
         )
+        sim_state["next_population_fill_time"] = now0 + FAST_POPULATION_FILL_INTERVAL
 
-    active_vehicle_ids = list(traci.vehicle.getIDList())
-    prune_vehicle_edge_history(active_vehicle_ids)
-    apply_traffic_light_lane_change_lock_to_all_vehicles()
+    # Route history / recovery / turn-lane preference is useful, but doing it
+    # once per SUMO frame is extremely expensive. Every few seconds is enough
+    # for stability and much faster.
+    if now0 >= sim_state.get("next_route_service_time", 0.0):
+        active_vehicle_ids = list(traci.vehicle.getIDList())
+        prune_vehicle_edge_history(active_vehicle_ids)
 
-    for veh_id in active_vehicle_ids:
-        # Ambulances keep their own emergency OD routes. Do not rewrite their
-        # routes or force lane changes with the normal passenger-car helpers.
-        if is_ambulance(veh_id):
-            continue
+        for veh_id in active_vehicle_ids:
+            if is_ambulance(veh_id):
+                continue
 
-        try:
-            current_lane_for_history = traci.vehicle.getLaneID(veh_id)
-            current_edge_for_history = lane_to_edge(current_lane_for_history)
-        except traci.TraCIException:
-            current_edge_for_history = None
+            try:
+                current_lane_for_history = traci.vehicle.getLaneID(veh_id)
+                current_edge_for_history = lane_to_edge(current_lane_for_history)
+            except traci.TraCIException:
+                current_edge_for_history = None
 
-        recent_edges = update_vehicle_edge_history(veh_id, current_edge_for_history)
+            recent_edges = update_vehicle_edge_history(veh_id, current_edge_for_history)
 
-        # Rescue vehicles from lanes that cannot legally reach their next routed edge.
-        # This specifically prevents lane 417292872_0 from trapping vehicles at its end.
-        if rescue_vehicle_from_unconnected_lane(
-            veh_id=veh_id,
-            raw_graph=raw_graph,
-            edge_metadata=edge_metadata,
-            core_edges=core_edges,
-            turn_index=turn_index,
-            rng=rng,
-            turn_counts=turn_counts,
-            args=args,
-            recent_edges=recent_edges,
-        ):
-            recovered_total += 1
-
-        if not use_od_routing(args):
-            extended, recovered = extend_vehicle_route(
+            if rescue_vehicle_from_unconnected_lane(
                 veh_id=veh_id,
-                min_remaining_edges=args.min_remaining_edges,
-                lookahead_edges=args.route_lookahead_edges,
-                turn_index=turn_index,
                 raw_graph=raw_graph,
                 edge_metadata=edge_metadata,
                 core_edges=core_edges,
+                turn_index=turn_index,
                 rng=rng,
                 turn_counts=turn_counts,
                 args=args,
                 recent_edges=recent_edges,
-            )
-
-            if extended:
-                extended_total += 1
-
-            if recovered:
+            ):
                 recovered_total += 1
 
-            # Random-walk mode still chooses S/R/L near intersections. OD mode
-            # does not: it preserves the fastest origin-destination route so
-            # turn ratios emerge naturally from the chosen trip endpoints.
-            apply_approach_turn_decision_to_vehicle(
-                veh_id=veh_id,
-                turn_index=turn_index,
-                raw_graph=raw_graph,
-                edge_metadata=edge_metadata,
-                core_edges=core_edges,
-                rng=rng,
-                args=args,
-                recent_edges=recent_edges,
-            )
+            if not use_od_routing(args):
+                extended, recovered = extend_vehicle_route(
+                    veh_id=veh_id,
+                    min_remaining_edges=args.min_remaining_edges,
+                    lookahead_edges=args.route_lookahead_edges,
+                    turn_index=turn_index,
+                    raw_graph=raw_graph,
+                    edge_metadata=edge_metadata,
+                    core_edges=core_edges,
+                    rng=rng,
+                    turn_counts=turn_counts,
+                    args=args,
+                    recent_edges=recent_edges,
+                )
 
-        # Keep straight-through vehicles out of shared right/straight lanes
-        # whenever a dedicated straight/no-right lane exists on the same approach.
-        apply_turn_lane_preference_to_vehicle(veh_id)
+                if extended:
+                    extended_total += 1
+                if recovered:
+                    recovered_total += 1
 
-    prune_approach_turn_decisions(traci.vehicle.getIDList())
+            if (not use_od_routing(args)) or OD_APPROACH_TURN_CONTROL_ENABLED:
+                apply_approach_turn_decision_to_vehicle(
+                    veh_id=veh_id,
+                    turn_index=turn_index,
+                    raw_graph=raw_graph,
+                    edge_metadata=edge_metadata,
+                    core_edges=core_edges,
+                    rng=rng,
+                    args=args,
+                    recent_edges=recent_edges,
+                )
+
+            apply_turn_lane_preference_to_vehicle(veh_id)
+
+        prune_approach_turn_decisions(active_vehicle_ids)
+        sim_state["next_route_service_time"] = now0 + FAST_ROUTE_SERVICE_INTERVAL
 
     for _ in range(num_steps):
         sim_time = traci.simulation.getTime()
 
-        # Rescue lane/route mismatches frequently, but not with a full expensive
-        # route-extension pass. This catches cars before they reach the end of
-        # lanes like 417292872_0 that cannot serve their next routed edge.
         if sim_time >= sim_state.get("next_unconnected_lane_rescue_time", 0.0):
             recovered_total += rescue_unconnected_lanes_for_all_vehicles(
                 active_ids=list(traci.vehicle.getIDList()),
@@ -5511,28 +7893,18 @@ def run_simulation_steps(
             )
             sim_state["next_unconnected_lane_rescue_time"] = sim_time + UNCONNECTED_LANE_RESCUE_INTERVAL
 
-        # Enforce the signalized-intersection no-lane-change zone before any
-        # lane-preference or lane-balancing helpers run. This also suppresses
-        # SUMO's own autonomous last-second lane changes near traffic lights.
-        apply_traffic_light_lane_change_lock_to_all_vehicles()
+        if sim_time >= sim_state.get("next_lane_lock_time", 0.0):
+            apply_traffic_light_lane_change_lock_to_all_vehicles()
+            sim_state["next_lane_lock_time"] = sim_time + FAST_LANE_LOCK_INTERVAL
 
-        # Lane preference must run more often than route extension. Otherwise a
-        # straight vehicle can enter a shared right/straight lane and remain
-        # there until it is too late to move.
         if sim_time >= sim_state.get("next_lane_pref_time", 0.0):
             apply_turn_lane_preference_to_all_vehicles()
             sim_state["next_lane_pref_time"] = sim_time + LANE_PREF_INTERVAL
 
-        # Mid-road lane balancing spreads free-flowing traffic across parallel
-        # lanes before it reaches the approach-decision zone. It is intentionally
-        # conservative so it does not cause last-second weaving near junctions.
         if sim_time >= sim_state.get("next_lane_balance_time", 0.0):
             apply_lane_balancing_to_all_vehicles()
             sim_state["next_lane_balance_time"] = sim_time + LANE_BALANCE_INTERVAL
 
-        # Spawn and track emergency vehicles before the keep-clear gate runs,
-        # so a newly spawned ambulance is still checked for downstream space
-        # before the next simulation step.
         update_ambulances(
             sim_state=sim_state,
             raw_graph=raw_graph,
@@ -5542,16 +7914,10 @@ def run_simulation_steps(
             args=args,
         )
 
-        # Vehicle-level keep-clear / right-of-way gate.
-        # Lights stay green according to the fixed cycle; cars decide whether
-        # they have enough downstream space to enter the junction. This applies
-        # to both signalized and unsignalized intersections.
-        apply_keep_clear_and_right_of_way_to_all_vehicles()
+        if sim_time >= sim_state.get("next_keep_clear_time", 0.0):
+            apply_keep_clear_and_right_of_way_to_all_vehicles()
+            sim_state["next_keep_clear_time"] = sim_time + FAST_KEEP_CLEAR_INTERVAL
 
-        # Strong anti-phantom-stop watchdog. A car is allowed to stop only when
-        # it has a leader ahead, is legitimately at an intersection/traffic
-        # light, is at the end of its route, or is being actively rescued.
-        # Otherwise, stale speed holds and route/lane problems are repaired.
         if sim_time >= sim_state.get("next_unjustified_stop_check_time", 0.0):
             apply_unjustified_stop_watchdog_to_all_vehicles(
                 raw_graph=raw_graph,
@@ -5568,6 +7934,23 @@ def run_simulation_steps(
             )
 
         traci.simulationStep()
+
+        if sim_time >= sim_state.get("next_od_balance_cleanup_time", 0.0):
+            cleanup_active_od_destination_tracking(sim_state)
+            cleanup_active_od_approach_balance_tracking(sim_state)
+            sim_state["next_od_balance_cleanup_time"] = sim_time + OD_BALANCE_CLEANUP_INTERVAL
+
+        print_destination_zone_hotspots(sim_state, sim_state.get("od_context"), force=False)
+        print_active_approach_hotspots(sim_state, force=False)
+
+        if SPAWN_DESTINATION_MARKERS_ENABLED and sim_time >= sim_state.get("next_spawn_destination_marker_update_time", 0.0):
+            _vehicle_spawn_destination_marker_after_simulation_step()
+            sim_state["next_spawn_destination_marker_update_time"] = sim_time + SPAWN_DESTINATION_MARKER_UPDATE_INTERVAL
+
+        if TARGET_TURN_MONITOR_TLS is not None and sim_time >= sim_state.get("next_turn_monitor_time", 0.0):
+            _turn_monitor_after_simulation_step()
+            sim_state["next_turn_monitor_time"] = sim_time + FAST_TURN_MONITOR_INTERVAL
+
         arrived += traci.simulation.getArrivedNumber()
 
         for controller in controllers:
@@ -5575,7 +7958,6 @@ def run_simulation_steps(
                 update_controller_after_simstep(controller)
 
     return arrived, spawned_total, extended_total, recovered_total
-
 
 def resolve_run_seed(user_seed):
     if user_seed is not None:
@@ -5695,6 +8077,7 @@ def run_simulation(args):
             "next_route_id": 0,
             "next_spawn_zone_index": 0,
             "next_od_origin_zone_index": 0,
+            "next_od_destination_zone_index": 0,
             "next_lane_pref_time": 0.0,
             "next_lane_balance_time": 0.0,
             "next_unjustified_stop_check_time": 0.0,
@@ -5704,6 +8087,7 @@ def run_simulation(args):
             "od_context": od_context,
             "od_trip_counts": Counter(),
             "od_movement_counts": Counter(),
+            "od_approach_movement_counts": defaultdict(Counter),
             "od_route_failures": 0,
         }
 
