@@ -692,7 +692,12 @@ class ExactSimulationTrafficSignalEnv(gym.Env):
             "next_lane_balance_time": 0.0,
             "next_unconnected_lane_rescue_time": 0.0,
             "next_unjustified_stop_check_time": 0.0,
-            "next_ambulance_spawn": float("inf"),
+            # NOTE: this must be a reachable time (0.0), not float("inf").
+            # Spawning is gated by `sim_time >= next_ambulance_spawn` in
+            # update_ambulances(); if this starts at infinity, that
+            # condition can never become true and ambulances never spawn
+            # for the entire episode, regardless of ambulance_interval.
+            "next_ambulance_spawn": 0.0,
             "active_ambulances": {},
             "od_context": od_context,
             "od_trip_counts": Counter(),
@@ -1280,7 +1285,7 @@ def train(args: argparse.Namespace) -> None:
 
     if args.resume and model_path.with_suffix(".zip").exists():
         print(f"Resuming model from {model_path}.zip")
-        model = MaskablePPO.load(str(model_path), env=train_env, device=args.device)
+        model = load_maskable_ppo_for_inference(model_path, train_env, args.device)
         model.learning_rate = linear_decay(args.lr_start, args.lr_end)
     else:
         print("Starting a fresh exact-simulation MaskablePPO model")
@@ -1382,7 +1387,7 @@ def evaluate(args: argparse.Namespace) -> None:
         eval_env = VecNormalize(eval_env, norm_obs=False, norm_reward=False)
         eval_env.training = False
 
-    model = MaskablePPO.load(str(model_path), env=eval_env, device=args.device)
+    model = load_maskable_ppo_for_inference(model_path, eval_env, args.device)
     obs = eval_env.reset()
     total_reward = 0.0
 
@@ -1537,7 +1542,7 @@ def run_model_episode(args: argparse.Namespace, scenario: TrafficScenario, seed:
         env = VecNormalize(raw_env, norm_obs=False, norm_reward=False)
         env.training = False
 
-    model = MaskablePPO.load(str(Path(args.model_path)), env=env, device=args.device)
+    model = load_maskable_ppo_for_inference(Path(args.model_path), env, args.device)
     obs = env.reset()
     samples: list[dict[str, float]] = []
 
