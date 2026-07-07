@@ -36,3 +36,37 @@ fixed_vs_model_*.json
 
 # Backups
 *.bak
+
+# Local env
+.venv/
+__pycache__/
+
+# Logs
+*.log
+
+# TensorBoard
+runs/
+
+# Model files
+models/*.zip
+models/*.pkl
+
+# Generated SUMO routes / trips
+background_santaclara_train_*.rou.xml
+background_train_*.rou.xml
+background_train_all_*.rou.xml
+random_drive_dynamic_turns_*.rou.xml
+native_sumo_vs_model_*.rou.xml
+native_sumo_signals_*.rou.xml
+trips.trips.xml
+
+# Evaluation outputs
+native_vs_model_*.csv
+native_vs_model_*.json
+fixed_vs_model_*.csv
+fixed_vs_model_*.json
+baseline_native_vs_old_model_1500.csv
+baseline_native_vs_old_model_1500.json
+
+# Backups
+*.bak

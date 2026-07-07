@@ -966,18 +966,25 @@ def compute_reward(controller, switched, arrived, prev_wait, prev_queue):
 
     reward = 0.0
 
-    reward += 2.0 * float(arrived)
-    reward += 0.020 * wait_delta
-    reward += 0.250 * queue_delta
+    # Conservative throughput reward.
+    # The old 2.0 value was too aggressive/noisy.
+    reward += 0.25 * float(arrived)
 
-    reward -= total_wait / 900.0
-    reward -= total_queue / 80.0
+    # Reward local congestion improvement.
+    reward += 0.010 * wait_delta
+    reward += 0.100 * queue_delta
 
+    # Keep the old model's main strength: low queue/wait.
+    reward -= total_wait / 600.0
+    reward -= total_queue / 50.0
+
+    # Keep switch penalty small but nonzero.
     if switched:
-        reward -= 0.05
+        reward -= 0.10
 
+    # Mild starvation penalty.
     if controller["phase_elapsed"] > MAX_GREEN_HOLD:
-        reward -= 0.50
+        reward -= 0.75
 
     return float(reward), float(total_wait), float(total_queue)
 
