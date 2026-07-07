@@ -5,3 +5,34 @@ __pycache__/
 large_region.net.xml
 large_region.net.xml
 .DS_Store
+
+# Local Python environment
+.venv/
+
+# Logs
+*.log
+
+# TensorBoard / training runs
+runs/
+
+# Model weights / normalization stats
+models/*.zip
+models/*.pkl
+
+# Generated SUMO routes/trips
+background_santaclara_train_*.rou.xml
+background_train_*.rou.xml
+random_drive_dynamic_turns_*.rou.xml
+native_sumo_vs_model_*.rou.xml
+trips.trips.xml
+
+# Generated evaluation outputs
+baseline_native_vs_old_model_1500.csv
+baseline_native_vs_old_model_1500.json
+native_vs_model_*.csv
+native_vs_model_*.json
+fixed_vs_model_*.csv
+fixed_vs_model_*.json
+
+# Backups
+*.bak
