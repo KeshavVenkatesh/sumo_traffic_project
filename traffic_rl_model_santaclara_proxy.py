@@ -834,6 +834,56 @@ def cyclic_heuristic_update(tls_id, controller):
 # Observation / reward
 # ============================================================
 
+
+def lane_vehicle_snapshot(lanes):
+    """Snapshot lane vehicle IDs plus speed/wait caches once for one sim time.
+
+    Pure speed optimization: avoids duplicate Python <-> TraCI calls inside
+    one observation/reward step while keeping the same per-vehicle queue/wait
+    semantics.
+    """
+    lane_ids = {}
+    speed_cache = {}
+    wait_cache = {}
+
+    for lane_id in lanes:
+        try:
+            veh_ids = tuple(traci.lane.getLastStepVehicleIDs(lane_id))
+        except traci.TraCIException:
+            veh_ids = ()
+
+        lane_ids[lane_id] = veh_ids
+
+        for veh_id in veh_ids:
+            if veh_id in speed_cache:
+                continue
+            try:
+                speed_cache[veh_id] = float(traci.vehicle.getSpeed(veh_id))
+                wait_cache[veh_id] = float(traci.vehicle.getWaitingTime(veh_id))
+            except traci.TraCIException:
+                speed_cache[veh_id] = 0.0
+                wait_cache[veh_id] = 0.0
+
+    return lane_ids, speed_cache, wait_cache
+
+
+def controlled_vehicle_ids(controller):
+    """Vehicles currently on this TLS's controlled incoming lanes."""
+    lanes = controller.get("all_in_lanes", set())
+    veh_ids = set()
+
+    for lane_id in lanes:
+        try:
+            veh_ids.update(traci.lane.getLastStepVehicleIDs(lane_id))
+        except traci.TraCIException:
+            pass
+
+    return veh_ids
+
+
+def clipped(value, lo, hi):
+    return max(lo, min(hi, float(value)))
+
 def movement_in_lanes(movement_map, movement_label):
     lanes = set()
 
@@ -843,90 +893,115 @@ def movement_in_lanes(movement_map, movement_label):
     return lanes
 
 
-def movement_queue_and_wait(controller, movement_label):
-    """
-    Old scheme: per-vehicle queue/wait calculation.
 
-    This is slower than lane-level measurement, but it matches the model behavior
-    that was learning better before.
-    """
-    lanes = movement_in_lanes(controller["movement_map"], movement_label)
+def movement_queue_and_wait(controller, movement_label, snapshot=None):
+    """Per-vehicle queue/wait for one movement, with optional cached snapshot."""
+    lanes = controller.get("movement_in_lanes_cache", {}).get(movement_label)
+    if lanes is None:
+        lanes = movement_in_lanes(controller["movement_map"], movement_label)
+
+    if snapshot is None:
+        snapshot = lane_vehicle_snapshot(lanes)
+
+    lane_ids, speed_cache, wait_cache = snapshot
 
     veh_ids = set()
-
     for lane_id in lanes:
-        try:
-            veh_ids.update(traci.lane.getLastStepVehicleIDs(lane_id))
-        except traci.TraCIException:
-            pass
+        veh_ids.update(lane_ids.get(lane_id, ()))
 
     queue = 0.0
     wait = 0.0
 
     for veh_id in veh_ids:
-        try:
-            speed = traci.vehicle.getSpeed(veh_id)
+        speed = speed_cache.get(veh_id)
+        if speed is None:
+            try:
+                speed = float(traci.vehicle.getSpeed(veh_id))
+                speed_cache[veh_id] = speed
+            except traci.TraCIException:
+                continue
 
-            if speed < 0.1:
-                queue += 1.0
+        if speed < 0.1:
+            queue += 1.0
 
-            wait += traci.vehicle.getWaitingTime(veh_id)
+        value = wait_cache.get(veh_id)
+        if value is None:
+            try:
+                value = float(traci.vehicle.getWaitingTime(veh_id))
+                wait_cache[veh_id] = value
+            except traci.TraCIException:
+                value = 0.0
 
-        except traci.TraCIException:
-            pass
+        wait += value
 
     return queue, wait
 
 
-def total_controlled_wait_and_queue(controller):
-    """
-    Old scheme: per-vehicle reward calculation.
-    """
-    all_in_lanes = set()
 
-    for label in MOVEMENT_LABELS:
-        all_in_lanes.update(movement_in_lanes(controller["movement_map"], label))
+
+def total_controlled_wait_and_queue(controller, snapshot=None):
+    """Per-vehicle controlled wait/queue using cached lane metadata."""
+    all_in_lanes = controller.get("all_in_lanes")
+
+    if all_in_lanes is None:
+        all_in_lanes = set()
+        for label in MOVEMENT_LABELS:
+            all_in_lanes.update(movement_in_lanes(controller["movement_map"], label))
+
+    if snapshot is None:
+        snapshot = lane_vehicle_snapshot(all_in_lanes)
+
+    lane_ids, speed_cache, wait_cache = snapshot
 
     veh_ids = set()
-
     for lane_id in all_in_lanes:
-        try:
-            veh_ids.update(traci.lane.getLastStepVehicleIDs(lane_id))
-        except traci.TraCIException:
-            pass
+        veh_ids.update(lane_ids.get(lane_id, ()))
 
     total_queue = 0.0
     total_wait = 0.0
 
     for veh_id in veh_ids:
-        try:
-            if traci.vehicle.getSpeed(veh_id) < 0.1:
-                total_queue += 1.0
+        speed = speed_cache.get(veh_id)
+        if speed is None:
+            try:
+                speed = float(traci.vehicle.getSpeed(veh_id))
+                speed_cache[veh_id] = speed
+            except traci.TraCIException:
+                continue
 
-            total_wait += traci.vehicle.getWaitingTime(veh_id)
+        if speed < 0.1:
+            total_queue += 1.0
 
-        except traci.TraCIException:
-            pass
+        value = wait_cache.get(veh_id)
+        if value is None:
+            try:
+                value = float(traci.vehicle.getWaitingTime(veh_id))
+                wait_cache[veh_id] = value
+            except traci.TraCIException:
+                value = 0.0
+
+        total_wait += value
 
     return total_wait, total_queue
 
 
-def get_observation(controller):
+
+
+def get_observation(controller, snapshot=None):
+    if snapshot is None:
+        snapshot = lane_vehicle_snapshot(controller.get("all_in_lanes", set()))
+
     obs = []
 
     for label in MOVEMENT_LABELS:
-        q, w = movement_queue_and_wait(controller, label)
-
+        q, w = movement_queue_and_wait(controller, label, snapshot=snapshot)
         obs.append(q / 100.0)
         obs.append(w / 1000.0)
 
     phase_one_hot = [0.0, 0.0, 0.0, 0.0]
-
     current_phase = controller["phases"][controller["phase_pos"]]
     current_slot = current_phase["slot"]
-
     phase_one_hot[current_slot] = 1.0
-
     obs.extend(phase_one_hot)
 
     obs.append(controller["phase_elapsed"] / MAX_GREEN_HOLD)
@@ -935,58 +1010,82 @@ def get_observation(controller):
     return np.array(obs, dtype=np.float32)
 
 
-def inactive_core_queue(controller):
-    """Queued protected movements that are not currently served.
 
-    Right turns are permissive in every phase, so starvation mainly means
-    left/straight protected movements waiting while another protected phase is
-    held too long.
-    """
+
+def inactive_core_queue(controller, snapshot=None):
+    """Queued protected movements that are not currently served."""
     try:
         active_rules = controller["phases"][controller["phase_pos"]]["rules"]
     except Exception:
         active_rules = {}
 
+    if snapshot is None:
+        snapshot = lane_vehicle_snapshot(controller.get("all_in_lanes", set()))
+
     waiting = 0.0
+
     for label in MOVEMENT_LABELS:
         if label.endswith("-R"):
             continue
         if active_rules.get(label) == "G":
             continue
-        q, _w = movement_queue_and_wait(controller, label)
+
+        q, _w = movement_queue_and_wait(controller, label, snapshot=snapshot)
         waiting += q
+
     return waiting
 
 
-def compute_reward(controller, switched, arrived, prev_wait, prev_queue):
-    total_wait, total_queue = total_controlled_wait_and_queue(controller)
+
+
+def compute_reward(controller, switched, arrived, prev_wait, prev_queue, local_cleared=0, snapshot=None):
+    """Local causal throughput + pressure reward.
+
+    local_cleared is better credit assignment than final-trip arrivals because
+    it measures vehicles that actually cleared this TLS's controlled incoming
+    lanes during the decision interval.
+    """
+    if snapshot is None:
+        snapshot = lane_vehicle_snapshot(controller.get("all_in_lanes", set()))
+
+    total_wait, total_queue = total_controlled_wait_and_queue(controller, snapshot=snapshot)
 
     wait_delta = float(prev_wait) - float(total_wait)
     queue_delta = float(prev_queue) - float(total_queue)
 
+    local_cleared = float(local_cleared)
+    inactive_queue = inactive_core_queue(controller, snapshot=snapshot)
+
+    elapsed = float(controller.get("phase_elapsed", 0.0))
+    excess_green = max(0.0, elapsed - STARVATION_START)
+
     reward = 0.0
 
-    # Conservative throughput reward.
-    # The old 2.0 value was too aggressive/noisy.
-    reward += 0.25 * float(arrived)
+    # Strong local causal throughput signal.
+    reward += 0.85 * local_cleared
 
-    # Reward local congestion improvement.
-    reward += 0.010 * wait_delta
-    reward += 0.100 * queue_delta
+    # Local improvement signals, clipped to avoid giant noisy PPO updates.
+    reward += 0.012 * clipped(wait_delta, -250.0, 250.0)
+    reward += 0.110 * clipped(queue_delta, -35.0, 35.0)
 
-    # Keep the old model's main strength: low queue/wait.
-    reward -= total_wait / 600.0
-    reward -= total_queue / 50.0
+    # Weak network-level hint only.
+    reward += 0.05 * float(arrived)
 
-    # Keep switch penalty small but nonzero.
+    # Current local pressure penalties.
+    reward -= total_wait / 850.0
+    reward -= total_queue / 42.0
+
+    # Penalize holding one phase while other protected movements queue.
+    reward -= (excess_green * inactive_queue) / 420.0
+
     if switched:
-        reward -= 0.10
+        reward -= 0.08
 
-    # Mild starvation penalty.
-    if controller["phase_elapsed"] > MAX_GREEN_HOLD:
-        reward -= 0.75
+    if elapsed > MAX_GREEN_HOLD:
+        reward -= 0.85
 
     return float(reward), float(total_wait), float(total_queue)
+
 
 
 class TrafficSignalEnv(gym.Env if gym is not None else object):
@@ -1150,24 +1249,25 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
             mask[0] = True
         return mask
 
+
     def step(self, action):
         action = int(action)
         mask = self.action_masks()
+
         if action < 0 or action >= len(mask) or not mask[action]:
             action = 0 if mask[0] else int(np.flatnonzero(mask)[0])
 
         switched = False
+
+        before_controlled_ids = controlled_vehicle_ids(self.controller)
+
         reset_run_step_arrival_counter()
 
         if action > 0:
             desired_slot = action - 1
-
             if desired_slot in self.controller["slot_to_pos"]:
                 desired_phase_pos = self.controller["slot_to_pos"][desired_slot]
-
-                can_switch = (
-                    self.controller["phase_elapsed"] >= MIN_GREEN_BEFORE_SWITCH
-                )
+                can_switch = self.controller["phase_elapsed"] >= MIN_GREEN_BEFORE_SWITCH
 
                 if can_switch and desired_phase_pos != self.controller["phase_pos"]:
                     switched = switch_to_phase(
@@ -1177,10 +1277,7 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
                     )
 
         if self.controller["phase_elapsed"] >= MAX_GREEN_HOLD:
-            next_pos = (
-                self.controller["phase_pos"] + 1
-            ) % len(self.controller["phases"])
-
+            next_pos = (self.controller["phase_pos"] + 1) % len(self.controller["phases"])
             switched = switch_to_phase(
                 self.controller["tls_id"],
                 self.controller,
@@ -1196,19 +1293,26 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
         arrived = consume_run_step_arrivals()
         self.episode_arrived += int(arrived)
 
-        obs = get_observation(self.controller)
+        after_controlled_ids = controlled_vehicle_ids(self.controller)
+        local_cleared = len(before_controlled_ids - after_controlled_ids)
+
+        snapshot = lane_vehicle_snapshot(self.controller.get("all_in_lanes", set()))
+        obs = get_observation(self.controller, snapshot=snapshot)
+
         reward, total_wait, total_queue = compute_reward(
             self.controller,
             switched=switched,
             arrived=arrived,
             prev_wait=self.prev_wait,
             prev_queue=self.prev_queue,
+            local_cleared=local_cleared,
+            snapshot=snapshot,
         )
+
         self.prev_wait = total_wait
         self.prev_queue = total_queue
 
         sim_time = traci.simulation.getTime()
-
         terminated = sim_time >= TRAIN_EPISODE_SECONDS
         truncated = traci.simulation.getMinExpectedNumber() <= 0
 
@@ -1227,11 +1331,13 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
             "sumo_seed": self.current_sumo_seed,
             "arrived": arrived,
             "episode_arrived": self.episode_arrived,
+            "local_cleared": local_cleared,
             "controlled_wait": total_wait,
             "controlled_queue": total_queue,
         }
 
         return obs, reward, terminated, truncated, info
+
 
     def close(self):
         if self.started:
