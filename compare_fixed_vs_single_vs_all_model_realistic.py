@@ -474,17 +474,75 @@ def phase_slot(controller: dict[str, Any]) -> int:
         return -1
 
 
+
+def controller_lane_metric_cache(controller: dict[str, Any]) -> dict[str, tuple[float, float]]:
+    """Cache lane queue/wait once for one controller observation.
+
+    This preserves the same lane-level queue/wait signal used by
+    movement_queue_and_wait(), but avoids repeated TraCI calls when different
+    movement labels share incoming lanes.
+    """
+    cache: dict[str, tuple[float, float]] = {}
+
+    all_lanes: set[str] = set()
+    for lanes in controller.get("movement_in_lanes_cache", {}).values():
+        all_lanes.update(lanes)
+
+    for lane_id in all_lanes:
+        try:
+            queue = float(sim.traci.lane.getLastStepHaltingNumber(lane_id))
+            wait = float(sim.traci.lane.getWaitingTime(lane_id))
+        except Exception:
+            queue = 0.0
+            wait = 0.0
+            try:
+                veh_ids = sim.traci.lane.getLastStepVehicleIDs(lane_id)
+            except sim.traci.TraCIException:
+                veh_ids = ()
+            for veh_id in veh_ids:
+                try:
+                    speed = sim.traci.vehicle.getSpeed(veh_id)
+                    if speed < sim.QUEUE_SPEED_THRESHOLD:
+                        queue += 1.0
+                    wait += sim.traci.vehicle.getWaitingTime(veh_id)
+                except sim.traci.TraCIException:
+                    continue
+        cache[lane_id] = (queue, wait)
+
+    return cache
+
+
+def movement_queue_and_wait_cached(
+    controller: dict[str, Any],
+    movement_label: str,
+    lane_cache: dict[str, tuple[float, float]],
+) -> tuple[float, float]:
+    queue = 0.0
+    wait = 0.0
+
+    for lane_id in controller["movement_in_lanes_cache"].get(movement_label, set()):
+        q, w = lane_cache.get(lane_id, (0.0, 0.0))
+        queue += q
+        wait += w
+
+    return queue, wait
+
+
 def get_observation(controller: dict[str, Any], episode_seconds: int) -> np.ndarray:
     """30-value observation compatible with the fast proxy model.
 
-    Layout: 12 movement queue/wait pairs, 4 phase one-hot values, normalized
-    phase elapsed, and normalized simulation time.  The surrounding SUMO
-    simulation is the full realistic_all_intersections_fixed_cycle.py logic.
+    Same layout as before:
+    12 movement queue/wait pairs, 4 phase one-hot values, normalized phase
+    elapsed, normalized simulation time.
+
+    Speedup: lane queue/wait values are cached once per controller observation.
     """
     obs: list[float] = []
 
+    lane_cache = controller_lane_metric_cache(controller)
+
     for label in sim.MOVEMENT_LABELS:
-        queue, wait = movement_queue_and_wait(controller, label)
+        queue, wait = movement_queue_and_wait_cached(controller, label, lane_cache)
         obs.append(queue / 100.0)
         obs.append(wait / 1000.0)
 
@@ -492,16 +550,19 @@ def get_observation(controller: dict[str, Any], episode_seconds: int) -> np.ndar
     slot = phase_slot(controller)
     if 0 <= slot < 4:
         phase_one_hot[slot] = 1.0
-    obs.extend(phase_one_hot)
 
+    obs.extend(phase_one_hot)
     obs.append(float(controller.get("phase_elapsed", 0.0)) / 60.0)
+
     try:
         sim_time = sim.traci.simulation.getTime()
     except sim.traci.TraCIException:
         sim_time = 0.0
+
     obs.append(sim_time / max(1.0, float(episode_seconds)))
 
     return np.array(obs, dtype=np.float32)
+
 
 class ExactSimulationTrafficSignalEnv(gym.Env):
     """Single-TLS Gym wrapper around the current realistic simulation file.

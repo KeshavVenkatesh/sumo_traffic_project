@@ -70,3 +70,14 @@ baseline_native_vs_old_model_1500.json
 
 # Backups
 *.bak
+
+# Split/parallel eval generated outputs
+split_eval_*/
+parallel_eval_*/
+
+# One-time patch scripts/backups
+patch_*.py
+*.before_*.bak
+*.py.before_*.bak
+.usable_santaclara_tls.txt
+.usable_santaclara_tls.txt
