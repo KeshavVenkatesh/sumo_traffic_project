@@ -365,7 +365,7 @@ def make_vec_env_for_stage(
 
     return VecNormalize(
         raw_vec_env,
-        norm_obs=True,
+        norm_obs=args.norm_obs,
         norm_reward=not eval_mode,
         clip_obs=args.clip_obs,
         clip_reward=args.clip_reward,
@@ -482,7 +482,9 @@ def make_model(env: VecNormalize, args: argparse.Namespace, model_path: Path) ->
     if args.resume and Path(model_zip).exists():
         print(f"Loading existing model and continuing training: {model_zip}")
         model = MaskablePPO.load(str(model_path), env=env, device=args.device)
-        model.learning_rate = linear_schedule(args.lr_start, args.lr_end)
+        lr_schedule = linear_schedule(args.lr_start, args.lr_end)
+        model.learning_rate = lr_schedule
+        model.lr_schedule = lr_schedule
         model.clip_range = linear_schedule(args.clip_start, args.clip_end)
         return model
 
@@ -786,6 +788,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-grad-norm", type=float, default=0.50)
     parser.add_argument("--target-kl", type=float, default=0.03)
 
+    parser.add_argument("--norm-obs", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--clip-obs", type=float, default=10.0)
     parser.add_argument("--clip-reward", type=float, default=10.0)
     parser.add_argument("--save-freq", type=int, default=25_000)

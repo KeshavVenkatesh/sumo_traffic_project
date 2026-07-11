@@ -101,7 +101,7 @@ if not os.path.exists(SUMO_GUI_BINARY):
 if not os.path.exists(SUMO_HEADLESS_BINARY):
     SUMO_HEADLESS_BINARY = "sumo"
 
-NET_FILE = os.path.join(BASE_DIR, "new_map.net.xml")
+NET_FILE = os.path.join(BASE_DIR, "santa_clara.net.xml")
 ROUTE_FILE = os.path.join(BASE_DIR, "random_drive_dynamic_turns.rou.xml")
 
 # Print timing details for this specific intersection when controllers are built.
