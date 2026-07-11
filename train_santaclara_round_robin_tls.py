@@ -128,6 +128,9 @@ def main() -> None:
     parser.add_argument("--n-steps", type=int, default=2048)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--n-epochs", type=int, default=8)
+    parser.add_argument("--lr-start", type=float, default=2.5e-4)
+    parser.add_argument("--lr-end", type=float, default=3e-5)
+    parser.add_argument("--norm-obs", action=argparse.BooleanOptionalAction, default=True)
 
     args = parser.parse_args()
 
@@ -206,6 +209,12 @@ def main() -> None:
             add_if_supported(cmd, help_text, "--n-steps", args.n_steps)
             add_if_supported(cmd, help_text, "--batch-size", args.batch_size)
             add_if_supported(cmd, help_text, "--n-epochs", args.n_epochs)
+            add_if_supported(cmd, help_text, "--lr-start", args.lr_start)
+            add_if_supported(cmd, help_text, "--lr-end", args.lr_end)
+            if args.norm_obs:
+                add_if_supported(cmd, help_text, "--norm-obs")
+            else:
+                add_if_supported(cmd, help_text, "--no-norm-obs")
 
             add_if_supported(cmd, help_text, "--no-curriculum")
             add_if_supported(cmd, help_text, "--no-progress-bar")
