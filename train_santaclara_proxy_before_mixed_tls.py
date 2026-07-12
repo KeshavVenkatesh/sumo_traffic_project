@@ -481,54 +481,11 @@ def make_model(env: VecNormalize, args: argparse.Namespace, model_path: Path) ->
 
     if args.resume and Path(model_zip).exists():
         print(f"Loading existing model and continuing training: {model_zip}")
+        model = MaskablePPO.load(str(model_path), env=env, device=args.device)
         lr_schedule = linear_schedule(args.lr_start, args.lr_end)
-        clip_schedule = linear_schedule(args.clip_start, args.clip_end)
-
-        # Override saved PPO training settings before _setup_model() constructs
-        # the rollout buffer for the new number of parallel environments.
-        custom_objects = {
-            "learning_rate": lr_schedule,
-            "lr_schedule": lr_schedule,
-            "clip_range": clip_schedule,
-            "n_steps": int(args.n_steps),
-            "batch_size": int(args.batch_size),
-            "n_epochs": int(args.n_epochs),
-            "gamma": float(args.gamma),
-            "gae_lambda": float(args.gae_lambda),
-            "ent_coef": float(args.ent_coef),
-            "vf_coef": float(args.vf_coef),
-            "max_grad_norm": float(args.max_grad_norm),
-            "target_kl": (
-                None if args.target_kl is None
-                else float(args.target_kl)
-            ),
-        }
-
-        model = MaskablePPO.load(
-            str(model_path),
-            env=env,
-            device=args.device,
-            custom_objects=custom_objects,
-        )
-
-        # Set them explicitly as well so later PPO updates use the requested
-        # conservative fine-tuning configuration.
         model.learning_rate = lr_schedule
         model.lr_schedule = lr_schedule
-        model.clip_range = clip_schedule
-        model.n_steps = int(args.n_steps)
-        model.batch_size = int(args.batch_size)
-        model.n_epochs = int(args.n_epochs)
-        model.gamma = float(args.gamma)
-        model.gae_lambda = float(args.gae_lambda)
-        model.ent_coef = float(args.ent_coef)
-        model.vf_coef = float(args.vf_coef)
-        model.max_grad_norm = float(args.max_grad_norm)
-        model.target_kl = (
-            None if args.target_kl is None
-            else float(args.target_kl)
-        )
-
+        model.clip_range = linear_schedule(args.clip_start, args.clip_end)
         return model
 
     policy_kwargs = dict(

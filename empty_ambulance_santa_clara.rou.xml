@@ -1,0 +1,3 @@
+<routes>
+  <vType id="ambulance" vClass="emergency" accel="3.0" decel="5.0" sigma="0.3" length="6.5" maxSpeed="55" color="1,0,0"/>
+</routes>
