@@ -114,6 +114,25 @@ HARD_HOLD_PENALTY = 0.35
 STARVATION_START = 38.0
 STARVATION_PENALTY_SCALE = 0.006
 
+# ---------------------------------------------------------------------------
+# Ambulance reward constants.
+# ---------------------------------------------------------------------------
+# Penalty applied per second of ambulance waiting time at/near the
+# controlled intersection, measured across one RL decision window.
+# Larger value → the agent cares more about clearing a path for ambulances.
+AMBULANCE_WAIT_PENALTY_SCALE  = 0.05
+
+# Bonus given whenever an ambulance successfully departs this zone (i.e. clears
+# the intersection) within the decision window.  Rewards active green-clearing.
+AMBULANCE_CLEARANCE_BONUS     = 0.50
+
+# Distance within which we consider an ambulance to be "at" this intersection.
+AMBULANCE_NEARBY_DISTANCE_M   = 150.0
+
+# Ambulance spawn interval used during training (shorter so the agent sees
+# plenty of ambulance events per episode).
+AMBULANCE_SPAWN_INTERVAL = 60.0
+
 # Accumulates arrivals across all SUMO micro-steps inside one RL decision.
 # traci.simulation.getArrivedNumber() only reports the most recent SUMO step,
 # so run_steps adds it up for the reward.
@@ -932,7 +951,70 @@ def get_observation(controller):
     obs.append(controller["phase_elapsed"] / MAX_GREEN_HOLD)
     obs.append(traci.simulation.getTime() / SIM_END)
 
+    # Ambulance awareness features (3 extra dims → obs shape becomes 33).
+    obs.extend(get_ambulance_obs(controller))
+
     return np.array(obs, dtype=np.float32)
+
+
+def is_ambulance(veh_id: str) -> bool:
+    return str(veh_id).startswith("ambulance_")
+
+
+def get_ambulance_obs(controller) -> list:
+    """Three ambulance features appended to the main observation vector.
+
+    Feature 0: normalised distance of the nearest ambulance to the controlled
+               intersection (0 = at the junction, 1 = ≥ 300 m away or none).
+    Feature 1: speed of the nearest ambulance normalised to [0, 1]
+               (max reference 22.2 m/s).  0 when no ambulance is active.
+    Feature 2: 1.0 when any ambulance is within AMBULANCE_NEARBY_DISTANCE_M of
+               the controlled intersection and currently waiting (speed < 1 m/s),
+               0.0 otherwise.  This is the strongest signal to the agent to act.
+    """
+    tls_id = controller.get("tls_id", "")
+    try:
+        junc_ids = traci.trafficlight.getControlledJunctions(tls_id)
+        if junc_ids:
+            jx, jy = traci.junction.getPosition(junc_ids[0])
+        else:
+            raise ValueError("no junctions")
+    except Exception:
+        return [1.0, 0.0, 0.0]
+
+    nearest_dist   = float("inf")
+    nearest_speed  = 0.0
+    any_waiting    = 0.0
+    MAX_DIST_REF   = 300.0  # normalisation reference distance
+
+    try:
+        veh_ids = traci.vehicle.getIDList()
+    except traci.TraCIException:
+        return [1.0, 0.0, 0.0]
+
+    for veh_id in veh_ids:
+        if not is_ambulance(veh_id):
+            continue
+        try:
+            x, y  = traci.vehicle.getPosition(veh_id)
+            dist  = math.hypot(x - jx, y - jy)
+            speed = traci.vehicle.getSpeed(veh_id)
+        except traci.TraCIException:
+            continue
+
+        if dist < nearest_dist:
+            nearest_dist  = dist
+            nearest_speed = speed
+
+        if dist <= AMBULANCE_NEARBY_DISTANCE_M and speed < 1.0:
+            any_waiting = 1.0
+
+    if nearest_dist == float("inf"):
+        return [1.0, 0.0, 0.0]
+
+    norm_dist  = min(1.0, nearest_dist / MAX_DIST_REF)
+    norm_speed = min(1.0, nearest_speed / 22.2)
+    return [norm_dist, norm_speed, any_waiting]
 
 
 def inactive_core_queue(controller):
@@ -990,6 +1072,34 @@ def compute_reward(controller, switched, arrived, prev_wait, prev_queue):
     if elapsed > STARVATION_START:
         reward -= (elapsed - STARVATION_START) * inactive_core_queue(controller) * STARVATION_PENALTY_SCALE
 
+    # Ambulance penalty: penalise every second an ambulance is stuck waiting
+    # near the controlled intersection, and give a small bonus if it clears.
+    tls_id = controller.get("tls_id", "")
+    try:
+        junc_ids = traci.trafficlight.getControlledJunctions(tls_id)
+        jx, jy   = traci.junction.getPosition(junc_ids[0]) if junc_ids else (0, 0)
+    except Exception:
+        jx, jy = 0, 0
+
+    try:
+        veh_ids = traci.vehicle.getIDList()
+    except traci.TraCIException:
+        veh_ids = []
+
+    for veh_id in veh_ids:
+        if not is_ambulance(veh_id):
+            continue
+        try:
+            x, y  = traci.vehicle.getPosition(veh_id)
+            dist  = math.hypot(x - jx, y - jy)
+            speed = traci.vehicle.getSpeed(veh_id)
+            wait  = traci.vehicle.getWaitingTime(veh_id)
+        except traci.TraCIException:
+            continue
+
+        if dist <= AMBULANCE_NEARBY_DISTANCE_M:
+            reward -= wait * AMBULANCE_WAIT_PENALTY_SCALE
+
     return float(reward), total_wait, total_queue
 
 
@@ -1036,7 +1146,7 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(30,),
+            shape=(33,),  # 30 traffic features + 3 ambulance features
             dtype=np.float32,
         )
 

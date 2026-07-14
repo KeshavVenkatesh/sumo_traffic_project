@@ -10,7 +10,7 @@ step.
 
 Training goal:
   - keep the traffic centered around the current realistic simulation settings
-    (2000 max vehicles, 1500 target vehicles, 350 initial vehicles, spawn batch 20)
+    (750 max vehicles, 650 target vehicles, 200 initial vehicles, spawn batch 12)
   - disable ambulances during training/evaluation
   - train much longer and more robustly with curriculum, VecNormalize,
     checkpointing, and optional deterministic evaluation
@@ -20,7 +20,7 @@ Typical strong training command:
     python train_traffic_signal_rl.py \
       --timesteps 2000000 \
       --episode-seconds 900 \
-      --model-path models/traffic_signal_maskable_ppo_throughput_reward \
+      --model-path models/traffic_signal_maskable_ppo_fast_proxy_strong \
       --no-resume \
       --progress-bar
 
@@ -28,7 +28,7 @@ Typical GUI evaluation command:
     python train_traffic_signal_rl.py \
       --eval-only \
       --gui \
-      --model-path models/traffic_signal_maskable_ppo_throughput_reward \
+      --model-path models/traffic_signal_maskable_ppo_fast_proxy_strong \
       --eval-steps 20000
 """
 
@@ -62,18 +62,16 @@ except ImportError as exc:  # pragma: no cover
 
 
 DEFAULT_TLS_ID = "cluster_12179861947_12179861948_12179861949_12185616643_#11more"
-DEFAULT_MODEL_BASENAME = "models/traffic_signal_maskable_ppo_throughput_reward"
+DEFAULT_MODEL_BASENAME = "models/traffic_signal_maskable_ppo_fast_proxy_strong"
 DEFAULT_ENV_MODULE = "traffic_rl_model"
 
-# Match the 1500-car stress tests used in fixed-vs-model/native-vs-model evaluation.
-# The previous trainer was centered around ~650-750 vehicles, which made the
-# learned controller smooth but too conservative under the 1500-car evaluation.
-SIM_CENTER_MAX_VEHICLES = 2000
-SIM_CENTER_TARGET_VEHICLES = 1500
-SIM_CENTER_INITIAL_VEHICLES = 350
-SIM_CENTER_SPAWN_BATCH = 20
+# Match the latest realistic simulation command as the center of training.
+SIM_CENTER_MAX_VEHICLES = 750
+SIM_CENTER_TARGET_VEHICLES = 650
+SIM_CENTER_INITIAL_VEHICLES = 200
+SIM_CENTER_SPAWN_BATCH = 12
 SIM_CENTER_ROUTE_LOOKAHEAD = 60
-SIM_CENTER_GREEN_DURATION = 35.0
+SIM_CENTER_GREEN_DURATION = 45.0
 SIM_CENTER_NO_LANE_CHANGE_DISTANCE = 100.0
 SIM_CENTER_LANE_PREP_DISTANCE = 320.0
 
@@ -203,10 +201,10 @@ def build_curriculum(args: argparse.Namespace) -> list[CurriculumStage]:
             CurriculumStage(
                 name="dense_warmup",
                 timesteps=warmup_steps,
-                max_vehicle_variants=sorted(set([900, 1100, min(1300, center_max)])),
-                target_vehicles=min(1100, center_target),
-                initial_vehicles=min(max(180, args.initial_vehicles), 350),
-                spawn_batch=max(12, min(args.spawn_batch, 24)),
+                max_vehicle_variants=sorted(set([450, 550, min(650, center_max)])),
+                target_vehicles=min(560, center_target),
+                initial_vehicles=min(max(120, args.initial_vehicles), 220),
+                spawn_batch=max(8, min(args.spawn_batch + 4, 20)),
                 route_lookahead_edges=max(35, min(args.route_lookahead_edges, 50)),
             )
         )
@@ -216,7 +214,7 @@ def build_curriculum(args: argparse.Namespace) -> list[CurriculumStage]:
             CurriculumStage(
                 name="simulation_center",
                 timesteps=main_steps,
-                max_vehicle_variants=sorted(set([1200, 1500, center_max])),
+                max_vehicle_variants=sorted(set([550, 650, center_max])),
                 target_vehicles=center_target,
                 initial_vehicles=args.initial_vehicles,
                 spawn_batch=args.spawn_batch,
@@ -229,10 +227,10 @@ def build_curriculum(args: argparse.Namespace) -> list[CurriculumStage]:
             CurriculumStage(
                 name="stress_generalization",
                 timesteps=stress_steps,
-                max_vehicle_variants=sorted(set([1500, 1800, center_max])),
-                target_vehicles=min(center_max, max(center_target, 1500)),
-                initial_vehicles=min(max(args.initial_vehicles, 450), center_target),
-                spawn_batch=max(args.spawn_batch, 24),
+                max_vehicle_variants=sorted(set([650, 700, center_max])),
+                target_vehicles=min(center_max, max(center_target, 700)),
+                initial_vehicles=min(max(args.initial_vehicles, 250), center_target),
+                spawn_batch=max(args.spawn_batch, 16),
                 route_lookahead_edges=args.route_lookahead_edges,
             )
         )
@@ -283,7 +281,10 @@ def apply_env_globals(module: Any, args: argparse.Namespace, stage: CurriculumSt
         args.intersection_lane_prep_distance,
     )
 
-    # Training difference requested by the user: no ambulances.
+    # Ambulances are ENABLED during training so the model learns to
+    # account for ambulance travel time in its reward signal.
+    # We shorten the spawn interval so the agent sees enough ambulance
+    # events per episode to learn from them (one every ~60 s of sim time).
     for name in (
         "USE_AMBULANCES",
         "ENABLE_AMBULANCES",
@@ -291,9 +292,9 @@ def apply_env_globals(module: Any, args: argparse.Namespace, stage: CurriculumSt
         "SPAWN_AMBULANCES",
         "TRAIN_WITH_AMBULANCES",
     ):
-        set_module_attr_if_present(module, name, False)
+        set_module_attr_if_present(module, name, True)
     for name in ("AMBULANCE_INTERVAL", "AMBULANCE_SPAWN_INTERVAL"):
-        set_module_attr_if_present(module, name, 10**12)
+        set_module_attr_if_present(module, name, 60.0)
 
     # Quiet training.
     set_first_present(module, ("TRAIN_WITH_SUMO_LOGS", "PRINT_SUMO_LOGS"), False)
@@ -542,7 +543,7 @@ def train(args: argparse.Namespace) -> None:
     print(f"  target TLS:       {args.tls_id}")
     print(f"  model path:       {model_path}.zip")
     print(f"  vecnormalize:     {vecnorm_path}")
-    print(f"  ambulances:       disabled when fast env exposes ambulance flags")
+    print(f"  ambulances:       ENABLED (spawn every 60 s of sim time)")
     print(f"  max center:       {args.max_vehicles}")
     print(f"  target center:    {args.target_vehicles}")
     print(f"  initial center:   {args.initial_vehicles}")
@@ -746,7 +747,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--model-path", default=DEFAULT_MODEL_BASENAME)
     parser.add_argument("--timesteps", type=int, default=2_000_000)
-    parser.add_argument("--episode-seconds", type=int, default=1800)
+    parser.add_argument("--episode-seconds", type=int, default=900)
 
     parser.add_argument("--max-vehicles", type=int, default=SIM_CENTER_MAX_VEHICLES)
     parser.add_argument("--target-vehicles", type=int, default=SIM_CENTER_TARGET_VEHICLES)
