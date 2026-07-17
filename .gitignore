@@ -1,57 +1,38 @@
 __pycache__/
 *.pyc
-__pycache__/
-*.pyc
-large_region.net.xml
-large_region.net.xml
 .DS_Store
-
-# Local Python environment
 .venv/
 
-# Logs
+# Logs, process/progress state, and backups
 *.log
+*.pid
+*_progress.json
+*.bak
+*.before_*.bak
+*.py.before_*.bak
 
-# TensorBoard / training runs
-runs/
-
-# Model weights / normalization stats
+# Model and optimizer artifacts
 models/*.zip
 models/*.pkl
+models/*_trainer.pt
+models/*_map_agnostic.json
+
+# TensorBoard / campaign outputs
+runs/
+comprehensive_eval/
+map_agnostic_eval_*/
+split_eval_*/
+split_eval_map_agnostic_*/
+parallel_eval_*/
+.last_map_agnostic_eval_dir
+
+# Generated map and demand corpora
+generated_map_corpus/
+training_demand_bank*/
+.cache/map_agnostic_tls/
+large_region.net.xml
 
 # Generated SUMO routes/trips
-background_santaclara_train_*.rou.xml
-background_train_*.rou.xml
-random_drive_dynamic_turns_*.rou.xml
-native_sumo_vs_model_*.rou.xml
-trips.trips.xml
-
-# Generated evaluation outputs
-baseline_native_vs_old_model_1500.csv
-baseline_native_vs_old_model_1500.json
-native_vs_model_*.csv
-native_vs_model_*.json
-fixed_vs_model_*.csv
-fixed_vs_model_*.json
-
-# Backups
-*.bak
-
-# Local env
-.venv/
-__pycache__/
-
-# Logs
-*.log
-
-# TensorBoard
-runs/
-
-# Model files
-models/*.zip
-models/*.pkl
-
-# Generated SUMO routes / trips
 background_santaclara_train_*.rou.xml
 background_train_*.rou.xml
 background_train_all_*.rou.xml
@@ -60,24 +41,69 @@ native_sumo_vs_model_*.rou.xml
 native_sumo_signals_*.rou.xml
 trips.trips.xml
 
-# Evaluation outputs
+# Generated evaluation tables
+baseline_native_vs_old_model_1500.csv
+baseline_native_vs_old_model_1500.json
 native_vs_model_*.csv
 native_vs_model_*.json
 fixed_vs_model_*.csv
 fixed_vs_model_*.json
-baseline_native_vs_old_model_1500.csv
-baseline_native_vs_old_model_1500.json
 
-# Backups
-*.bak
-
-# Split/parallel eval generated outputs
-split_eval_*/
-parallel_eval_*/
-
-# One-time patch scripts/backups
+# One-time local patch/sampling files
 patch_*.py
-*.before_*.bak
-*.py.before_*.bak
 .usable_santaclara_tls.txt
-.usable_santaclara_tls.txt
+
+# Python virtual environments
+.venv/
+venv/
+.venv-traffic/
+env/
+
+# Trained models and checkpoints
+models/
+checkpoints/
+*.pt
+*.pth
+
+# Generated training datasets
+training_demand_bank_v3/
+generated_map_corpus/
+
+# Training output
+runs/
+sumo_worker_logs/
+wandb/
+*.log
+events.out.tfevents.*
+
+# Python/cache files
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Local configuration
+.env
+.DS_Store
+
+# Do not upload Python environments
+.venv/
+venv/
+.venv-traffic/
+env/
+
+# Do not upload generated caches/logs
+__pycache__/
+*.pyc
+.pytest_cache/
+runs/
+sumo_worker_logs/
+*.log
+
+# Generated datasets
+training_demand_bank_v3/
+generated_map_corpus/
+
+# Models must remain included
+!models/
+!models/**

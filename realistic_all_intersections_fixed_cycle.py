@@ -81,7 +81,16 @@ def _repair_fontconfig_environment():
 _repair_proj_environment()
 _repair_fontconfig_environment()
 
-import traci
+if os.environ.get("SUMO_USE_LIBSUMO", "0") == "1":
+    try:
+        import libsumo as traci
+    except ImportError as exc:
+        raise ImportError(
+            "SUMO_USE_LIBSUMO=1 was requested, but libsumo is unavailable. "
+            "Install a SUMO build with Python libsumo support or disable the flag."
+        ) from exc
+else:
+    import traci
 
 try:
     import sumolib
@@ -101,13 +110,22 @@ if not os.path.exists(SUMO_GUI_BINARY):
 if not os.path.exists(SUMO_HEADLESS_BINARY):
     SUMO_HEADLESS_BINARY = "sumo"
 
-NET_FILE = os.path.join(BASE_DIR, os.environ.get("TRAFFIC_NET_FILE", "new_map.net.xml"))
+_traffic_net_file = os.environ.get("TRAFFIC_NET_FILE", "new_map.net.xml")
+NET_FILE = (
+    _traffic_net_file
+    if os.path.isabs(_traffic_net_file)
+    else os.path.join(BASE_DIR, _traffic_net_file)
+)
 ROUTE_FILE = os.path.join(BASE_DIR, "random_drive_dynamic_turns.rou.xml")
 
 # Print timing details for this specific intersection when controllers are built.
 # This is diagnostic only; it does not change signal behavior.
 PHASE_LENGTH_DEBUG_TLS_ID = "cluster_282813104_282813137_5041442783_5041442784"
 PRINT_PHASE_LENGTH_DEBUG = True
+
+# Legacy experiments retain their generated compass/four-slot phases. Schema
+# v3 opts into the map's variable-length native stable-green catalog.
+USE_MAP_AGNOSTIC_PHASE_CATALOG = False
 
 
 # ============================================================
@@ -4779,18 +4797,114 @@ def build_controller_for_tls(tls_id, rng, activate=True):
     return controller
 
 
+def _native_logic_for_tls(tls_id):
+    """Return the active native tlLogic, falling back to the first program."""
+    logics = _get_tls_program_logics_for_debug(tls_id)
+    if not logics:
+        return None
+
+    try:
+        active_program = str(traci.trafficlight.getProgram(tls_id))
+    except Exception:
+        active_program = ""
+
+    for logic in logics:
+        program_id = str(getattr(logic, "programID", getattr(logic, "programId", "")))
+        if program_id == active_program:
+            return logic
+    return logics[0]
+
+
+def build_map_agnostic_controller_for_tls(tls_id, rng, activate=True):
+    """Build variable-length phase candidates from native stable green states.
+
+    Native green states preserve netconvert/SUMO's conflict decisions. Yellow,
+    red-yellow, and all-red phases are excluded from the action catalog because
+    the controller inserts a conservative clearance transition itself.
+    """
+    try:
+        state_length, movement_map = classify_tls_movements(tls_id)
+        logic = _native_logic_for_tls(tls_id)
+    except Exception:
+        return None
+    if logic is None:
+        return None
+
+    phases = []
+    seen_states = set()
+    for native_index, native_phase in enumerate(list(getattr(logic, "phases", []) or [])):
+        state = str(getattr(native_phase, "state", ""))
+        if len(state) != state_length:
+            continue
+        if any(char in state for char in "yYu"):
+            continue
+        if not any(char in state for char in "Ggs"):
+            continue
+        if state in seen_states:
+            continue
+        seen_states.add(state)
+        phases.append(
+            {
+                "slot": len(phases),
+                "name": f"native-green-{native_index}",
+                "state": state,
+                "native_phase_index": native_index,
+                "native_duration": float(
+                    getattr(native_phase, "duration", 0.0) or 0.0
+                ),
+                "rules": {},
+                "core_labels": [],
+            }
+        )
+
+    if len(phases) < 2:
+        return None
+
+    movement_in_lanes_cache, movement_out_lanes_cache, all_in_lanes = build_lane_caches(
+        movement_map
+    )
+    controller = {
+        "tls_id": tls_id,
+        "state_length": state_length,
+        "movement_map": movement_map,
+        "movement_in_lanes_cache": movement_in_lanes_cache,
+        "movement_out_lanes_cache": movement_out_lanes_cache,
+        "all_in_lanes": all_in_lanes,
+        "phases": phases,
+        "phase_pos": rng.randrange(len(phases)),
+        "mode": "green",
+        "remaining": 0.0,
+        "phase_elapsed": 0.0,
+        "last_active_indices": set(),
+        "next_phase_pos": None,
+        "disabled": False,
+        "green_duration": 30.0,
+        "last_signal_update": -1e9,
+        "phase_catalog": "native_stable_greens",
+    }
+    if activate:
+        start_green(controller, controller["phase_pos"])
+    return controller
+
+
 def start_green(controller, phase_pos=None):
     if phase_pos is not None:
         controller["phase_pos"] = phase_pos
 
     phase = controller["phases"][controller["phase_pos"]]
 
-    green_state, active_indices = build_state_from_movements(
-        controller["state_length"],
-        controller["movement_map"],
-        phase["rules"],
-        check_space=False,
-    )
+    if "state" in phase:
+        green_state = str(phase["state"])
+        active_indices = {
+            index for index, char in enumerate(green_state) if char in ("G", "g", "s")
+        }
+    else:
+        green_state, active_indices = build_state_from_movements(
+            controller["state_length"],
+            controller["movement_map"],
+            phase["rules"],
+            check_space=False,
+        )
 
     traci.trafficlight.setRedYellowGreenState(
         controller["tls_id"],
@@ -4807,13 +4921,18 @@ def start_green(controller, phase_pos=None):
 
 def update_green(controller):
     phase = controller["phases"][controller["phase_pos"]]
-
-    green_state, active_indices = build_state_from_movements(
-        controller["state_length"],
-        controller["movement_map"],
-        phase["rules"],
-        check_space=False,
-    )
+    if "state" in phase:
+        green_state = str(phase["state"])
+        active_indices = {
+            index for index, char in enumerate(green_state) if char in ("G", "g", "s")
+        }
+    else:
+        green_state, active_indices = build_state_from_movements(
+            controller["state_length"],
+            controller["movement_map"],
+            phase["rules"],
+            check_space=False,
+        )
 
     traci.trafficlight.setRedYellowGreenState(
         controller["tls_id"],
@@ -4828,7 +4947,10 @@ def start_yellow(controller):
     # transition. They remain permissive green while protected straight/left
     # movements change to yellow. Vehicles still obey the keep-clear and
     # right-of-way checks before actually entering the junction.
-    permissive_right_indices = right_turn_signal_indices(controller, check_space=True)
+    if controller.get("phase_catalog") == "native_stable_greens":
+        permissive_right_indices = set()
+    else:
+        permissive_right_indices = right_turn_signal_indices(controller, check_space=True)
 
     yellow_state = build_yellow_state(
         controller["state_length"],
@@ -4848,7 +4970,11 @@ def start_yellow(controller):
 
 
 def start_all_red(controller):
-    clearance_state, active_indices = all_red_with_permissive_right_turns_state(controller)
+    if controller.get("phase_catalog") == "native_stable_greens":
+        clearance_state = all_red_state(controller["state_length"])
+        active_indices = set()
+    else:
+        clearance_state, active_indices = all_red_with_permissive_right_turns_state(controller)
 
     traci.trafficlight.setRedYellowGreenState(
         controller["tls_id"],
@@ -5038,7 +5164,12 @@ def build_all_fixed_controllers(rng, args):
     skipped = []
 
     for tls_id in traci.trafficlight.getIDList():
-        controller = build_controller_for_tls(tls_id, rng=rng, activate=True)
+        builder = (
+            build_map_agnostic_controller_for_tls
+            if USE_MAP_AGNOSTIC_PHASE_CATALOG
+            else build_controller_for_tls
+        )
+        controller = builder(tls_id, rng=rng, activate=True)
 
         if controller is None:
             skipped.append(tls_id)

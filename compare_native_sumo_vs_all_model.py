@@ -77,16 +77,24 @@ class NativeSignalEpisode:
         self.outer_args = args
         self.gui = bool(gui)
         self.env_rank = int(env_rank)
-        self.route_file = os.path.join(
+        demand_route = str(getattr(args, "demand_route_file", "") or "").strip()
+        self.external_demand_route_file = (
+            str(Path(demand_route).expanduser().resolve()) if demand_route else ""
+        )
+        generated_route_file = os.path.join(
             sim.BASE_DIR,
             f"native_sumo_vs_model_{os.getpid()}_{self.env_rank}.rou.xml",
         )
+        self.route_file = self.external_demand_route_file or generated_route_file
         self.args = cmp.make_sim_args(
             scenario=scenario,
             route_file=self.route_file,
             episode_seconds=int(args.episode_seconds),
             gui=bool(gui),
         )
+        if self.external_demand_route_file:
+            self.args.initial_vehicles = 0
+            self.args.target_vehicles = 0
         self.rng = random.Random(self.scenario.seed)
         self.turn_counts: Counter[str] = Counter()
         self.controllers: list[dict[str, Any]] = []
@@ -121,7 +129,11 @@ class NativeSignalEpisode:
     def reset(self) -> dict[str, Any]:
         cmp.reset_sim_globals()
         cmp.apply_sim_distance_globals(self.scenario)
-        sim.write_empty_route_file(self.route_file)
+        if self.external_demand_route_file:
+            if not Path(self.route_file).is_file():
+                raise FileNotFoundError(f"Fixed demand route does not exist: {self.route_file}")
+        else:
+            sim.write_empty_route_file(self.route_file)
 
         if self.gui:
             sim.ensure_xquartz()
@@ -190,19 +202,20 @@ class NativeSignalEpisode:
             "od_route_failures": 0,
         }
 
-        sim.fill_vehicle_population(
-            sim_state=self.sim_state,
-            target_count=self.args.initial_vehicles,
-            max_to_spawn=self.args.initial_vehicles,
-            start_edges=self.main_start_edges,
-            turn_index=self.turn_index,
-            raw_graph=self.raw_graph,
-            edge_metadata=self.edge_metadata,
-            core_edges=self.core_edges,
-            rng=self.rng,
-            turn_counts=self.turn_counts,
-            args=self.args,
-        )
+        if not self.external_demand_route_file:
+            sim.fill_vehicle_population(
+                sim_state=self.sim_state,
+                target_count=self.args.initial_vehicles,
+                max_to_spawn=self.args.initial_vehicles,
+                start_edges=self.main_start_edges,
+                turn_index=self.turn_index,
+                raw_graph=self.raw_graph,
+                edge_metadata=self.edge_metadata,
+                core_edges=self.core_edges,
+                rng=self.rng,
+                turn_counts=self.turn_counts,
+                args=self.args,
+            )
 
         self.total_arrived = 0
         return self.info()
@@ -374,7 +387,12 @@ def run_native_signal_episode(args: argparse.Namespace, scenario: cmp.TrafficSce
     finally:
         episode.close()
 
-    return cmp.summarize_samples("native_sumo", seed, samples)
+    summary = cmp.summarize_samples("native_sumo", seed, samples)
+    summary["demand_mode"] = (
+        "fixed_route_replay" if getattr(args, "demand_route_file", "") else "active_population"
+    )
+    summary["demand_route_file"] = str(getattr(args, "demand_route_file", "") or "")
+    return summary
 
 
 def aggregate_by_controller(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -384,7 +402,8 @@ def aggregate_by_controller(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def print_native_vs_model_table(rows: list[dict[str, Any]]) -> None:
     agg = {row["controller"]: row for row in aggregate_by_controller(rows)}
     native = agg.get("native_sumo")
-    model = agg.get("all_model")
+    model_label = getattr(cmp, "ALL_MODEL_CONTROLLER_LABEL", "all_model")
+    model = agg.get(model_label)
     fixed = agg.get("fixed_cycle")
 
     if not native or not model:
@@ -513,6 +532,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-fixed-cycle", action="store_true",
                         help="Also include the generated fixed-cycle controller as a third baseline.")
     parser.add_argument("--print-scenarios", action="store_true")
+    parser.add_argument(
+        "--demand-route-file",
+        default="",
+        help=(
+            "Optional pre-generated .rou.xml replayed unchanged by every controller. "
+            "When set, dynamic active-population replenishment is disabled."
+        ),
+    )
 
     parser.add_argument("--max-vehicle-center", type=int, default=cmp.SIM_CENTER_MAX_VEHICLES)
     parser.add_argument("--target-vehicle-center", type=int, default=cmp.SIM_CENTER_TARGET_VEHICLES)
@@ -526,6 +553,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.demand_route_file:
+        args.demand_route_file = str(Path(args.demand_route_file).expanduser().resolve())
+        if not Path(args.demand_route_file).is_file():
+            raise FileNotFoundError(args.demand_route_file)
     args.max_vehicle_center = min(int(args.max_vehicle_center), cmp.SIM_CENTER_MAX_VEHICLES)
     args.target_vehicle_center = min(int(args.target_vehicle_center), args.max_vehicle_center)
     args.initial_vehicle_center = min(int(args.initial_vehicle_center), args.target_vehicle_center)

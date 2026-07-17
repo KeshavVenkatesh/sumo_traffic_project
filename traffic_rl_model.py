@@ -1183,9 +1183,20 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
         ]
 
         if TRAIN_WITH_SUMO_LOGS:
+            # Each parallel environment runs in a separate process.
+            # Unique filenames prevent workers from overwriting the same logs.
+            log_dir = Path(BASE_DIR) / "sumo_worker_logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+            suffix = (
+                f"pid{os.getpid()}_"
+                f"seed{self.current_sumo_seed}_"
+                f"{time.time_ns()}"
+            )
+
             cmd.extend([
-                "--log", SUMO_RUN_LOG,
-                "--error-log", SUMO_ERROR_LOG,
+                "--log", str(log_dir / f"sumo_{suffix}.log"),
+                "--error-log", str(log_dir / f"sumo_{suffix}.error.log"),
             ])
 
         return cmd
@@ -1231,7 +1242,12 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
         self.episode_arrived = 0
         reset_run_step_arrival_counter()
 
-        return get_observation(self.controller), {}
+        observation = get_observation(self.controller)
+        self._last_valid_observation = np.asarray(
+            observation,
+            dtype=np.float32,
+        ).copy()
+        return observation, {}
 
     def action_masks(self):
         mask = np.zeros(5, dtype=bool)
@@ -1269,6 +1285,76 @@ class TrafficSignalEnv(gym.Env if gym is not None else object):
         return mask
 
     def step(self, action):
+        # A single SUMO process can occasionally terminate during a TraCI step.
+        # Convert that failure into a truncated episode so SubprocVecEnv resets
+        # only this worker instead of terminating the complete PPO campaign.
+        try:
+            result = self._step_connected(action)
+            self._last_valid_observation = np.asarray(
+                result[0],
+                dtype=np.float32,
+            ).copy()
+            return result
+        except (
+            traci.exceptions.FatalTraCIError,
+            traci.TraCIException,
+            ConnectionError,
+            BrokenPipeError,
+            EOFError,
+        ) as exc:
+            self._sumo_recovery_count = (
+                getattr(self, "_sumo_recovery_count", 0) + 1
+            )
+
+            route_name = os.path.basename(
+                getattr(self, "current_background_route_file", "")
+            )
+            sumo_seed = getattr(self, "current_sumo_seed", None)
+
+            print(
+                "[SUMO recovery] "
+                f"count={self._sumo_recovery_count} "
+                f"route={route_name} "
+                f"seed={sumo_seed} "
+                f"error={type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
+            try:
+                traci.close()
+            except Exception:
+                pass
+            self.started = False
+
+            observation = getattr(
+                self,
+                "_last_valid_observation",
+                None,
+            )
+            if observation is None:
+                observation = np.zeros(
+                    self.observation_space.shape,
+                    dtype=np.float32,
+                )
+            else:
+                observation = np.asarray(
+                    observation,
+                    dtype=np.float32,
+                ).copy()
+
+            info = {
+                "sumo_recovery": True,
+                "sumo_error": f"{type(exc).__name__}: {exc}",
+                "background_route": route_name,
+                "sumo_seed": sumo_seed,
+                "recovery_count": self._sumo_recovery_count,
+            }
+
+            # The crash is an external simulator truncation, not a terminal
+            # traffic state and not an action-dependent penalty.
+            return observation, 0.0, False, True, info
+
+    def _step_connected(self, action):
         action = int(action)
         mask = self.action_masks()
         if action < 0 or action >= len(mask) or not mask[action]:

@@ -88,6 +88,7 @@ except ImportError as exc:  # pragma: no cover
 # require any target intersection.
 TARGET_TLS_ID = None
 MODEL_DEFAULT = "models/traffic_signal_maskable_ppo_throughput_reward"
+ALL_MODEL_CONTROLLER_LABEL = "all_model"
 
 # Center values match the simulation command you have been using for the current
 # file.  Training randomizes around these, but evaluation can lock to them.
@@ -200,6 +201,11 @@ class ScenarioSampler:
         self.green_duration_center = green_duration_center
         self.density_spread = max(0.0, density_spread)
         self.initial_spread = max(0.0, initial_spread)
+        # Legacy experiments retain these floors. Specialized environments may
+        # lower them after construction when demand is normalized by map size.
+        self.min_max_vehicles = 350
+        self.min_target_vehicles = 250
+        self.min_initial_vehicles = 40
 
     def _jitter_int(self, center: int, spread: float, lo: int, hi: int) -> int:
         if hi < lo:
@@ -218,16 +224,25 @@ class ScenarioSampler:
     def sample(self) -> TrafficScenario:
         # Vary traffic intensity and cap around the simulation values.  The hard
         # cap remains the simulation hard cap, not an old 1000-car default.
-        max_lo = max(350, int(self.max_vehicle_center * (1.0 - self.density_spread)))
+        max_lo = max(
+            int(self.min_max_vehicles),
+            int(self.max_vehicle_center * (1.0 - self.density_spread)),
+        )
         max_hi = self.max_vehicle_center
         max_vehicles = self._jitter_int(self.max_vehicle_center, self.density_spread, max_lo, max_hi)
 
-        target_lo = max(250, int(self.target_center * (1.0 - self.density_spread)))
+        target_lo = max(
+            int(self.min_target_vehicles),
+            int(self.target_center * (1.0 - self.density_spread)),
+        )
         target_hi = min(max_vehicles, int(self.target_center * (1.0 + self.density_spread)))
         target_vehicles = self._jitter_int(self.target_center, self.density_spread, target_lo, target_hi)
         target_vehicles = min(target_vehicles, max_vehicles)
 
-        initial_lo = max(40, int(self.initial_center * (1.0 - self.initial_spread)))
+        initial_lo = max(
+            int(self.min_initial_vehicles),
+            int(self.initial_center * (1.0 - self.initial_spread)),
+        )
         initial_hi = min(target_vehicles, int(self.initial_center * (1.0 + self.initial_spread)))
         initial_vehicles = self._jitter_int(self.initial_center, self.initial_spread, initial_lo, initial_hi)
         initial_vehicles = min(initial_vehicles, target_vehicles)
@@ -562,6 +577,16 @@ def get_observation(controller: dict[str, Any], episode_seconds: int) -> np.ndar
     obs.append(sim_time / max(1.0, float(episode_seconds)))
 
     return np.array(obs, dtype=np.float32)
+
+
+def get_observation_batch(
+    controllers: list[dict[str, Any]], episode_seconds: int
+):
+    """Policy seam for cache-aware observation builders."""
+    return [
+        get_observation(controller, episode_seconds)
+        for controller in controllers
+    ]
 
 
 class ExactSimulationTrafficSignalEnv(gym.Env):
@@ -1044,15 +1069,25 @@ class AnchorlessSimulationEpisode:
         self.outer_args = args
         self.gui = bool(gui)
         self.env_rank = int(env_rank)
+        demand_route = str(getattr(args, "demand_route_file", "") or "").strip()
+        self.external_demand_route_file = (
+            str(Path(demand_route).expanduser().resolve()) if demand_route else ""
+        )
+        generated_route_file = os.path.join(
+            sim.BASE_DIR,
+            f"random_drive_dynamic_turns_anchorless_{os.getpid()}_{self.env_rank}.rou.xml",
+        )
         self.args = make_sim_args(
             scenario=scenario,
-            route_file=os.path.join(
-                sim.BASE_DIR,
-                f"random_drive_dynamic_turns_anchorless_{os.getpid()}_{self.env_rank}.rou.xml",
-            ),
+            route_file=self.external_demand_route_file or generated_route_file,
             episode_seconds=int(args.episode_seconds),
             gui=bool(gui),
         )
+        if self.external_demand_route_file:
+            # The route file already contains the full controller-independent
+            # departure schedule. Disable the active-population replenisher.
+            self.args.initial_vehicles = 0
+            self.args.target_vehicles = 0
         self.route_file = self.args.route_file
         self.rng = random.Random(self.scenario.seed)
         self.turn_counts: Counter[str] = Counter()
@@ -1088,7 +1123,11 @@ class AnchorlessSimulationEpisode:
     def reset(self) -> dict[str, Any]:
         reset_sim_globals()
         apply_sim_distance_globals(self.scenario)
-        sim.write_empty_route_file(self.route_file)
+        if self.external_demand_route_file:
+            if not Path(self.route_file).is_file():
+                raise FileNotFoundError(f"Fixed demand route does not exist: {self.route_file}")
+        else:
+            sim.write_empty_route_file(self.route_file)
 
         if self.gui:
             sim.ensure_xquartz()
@@ -1149,19 +1188,20 @@ class AnchorlessSimulationEpisode:
             "od_route_failures": 0,
         }
 
-        sim.fill_vehicle_population(
-            sim_state=self.sim_state,
-            target_count=self.args.initial_vehicles,
-            max_to_spawn=self.args.initial_vehicles,
-            start_edges=self.main_start_edges,
-            turn_index=self.turn_index,
-            raw_graph=self.raw_graph,
-            edge_metadata=self.edge_metadata,
-            core_edges=self.core_edges,
-            rng=self.rng,
-            turn_counts=self.turn_counts,
-            args=self.args,
-        )
+        if not self.external_demand_route_file:
+            sim.fill_vehicle_population(
+                sim_state=self.sim_state,
+                target_count=self.args.initial_vehicles,
+                max_to_spawn=self.args.initial_vehicles,
+                start_edges=self.main_start_edges,
+                turn_index=self.turn_index,
+                raw_graph=self.raw_graph,
+                edge_metadata=self.edge_metadata,
+                core_edges=self.core_edges,
+                rng=self.rng,
+                turn_counts=self.turn_counts,
+                args=self.args,
+            )
 
         self.total_arrived = 0
         return self.info()
@@ -1209,6 +1249,20 @@ def load_model_with_vecnormalize(args: argparse.Namespace, seed: int, label: str
 
     model = MaskablePPO.load(str(Path(args.model_path)), env=norm_env, device=args.device)
     return model, norm_env
+
+
+def stack_policy_observations(observations):
+    """Batch legacy arrays or schema-v3 Dict observations."""
+    if not observations:
+        raise ValueError("Cannot stack an empty policy observation batch.")
+    first = observations[0]
+    if isinstance(first, dict):
+        return {
+            key: np.stack([np.asarray(obs[key]) for obs in observations], axis=0)
+            for key in first
+        }
+    return np.stack(observations, axis=0).astype(np.float32)
+
 
 def build_fixed_scenario(seed: int = 42, args: Optional[argparse.Namespace] = None) -> TrafficScenario:
     max_vehicles = getattr(args, "max_vehicle_center", SIM_CENTER_MAX_VEHICLES) if args is not None else SIM_CENTER_MAX_VEHICLES
@@ -1761,6 +1815,12 @@ def run_all_model_episode(args: argparse.Namespace, scenario: TrafficScenario, s
     model, norm_env = load_model_with_vecnormalize(args, seed, 'all-model')
 
     samples: list[dict[str, float]] = []
+    policy_decisions = 0
+    policy_switches = 0
+    policy_forced_switches = 0
+    policy_invalid_actions = 0
+    spillback_samples: list[float] = []
+    starvation_samples: list[float] = []
     try:
         episode.reset()
 
@@ -1802,10 +1862,11 @@ def run_all_model_episode(args: argparse.Namespace, scenario: TrafficScenario, s
                 ]
 
                 if controllers_to_update:
-                    obs_batch = np.stack([
-                        get_observation(controller, args.episode_seconds)
-                        for controller in controllers_to_update
-                    ]).astype(np.float32)
+                    obs_batch = stack_policy_observations(
+                        get_observation_batch(
+                            controllers_to_update, args.episode_seconds
+                        )
+                    )
                     masks = np.stack([
                         valid_action_mask_for_controller(controller)
                         for controller in controllers_to_update
@@ -1826,7 +1887,33 @@ def run_all_model_episode(args: argparse.Namespace, scenario: TrafficScenario, s
                         actions, _ = model.predict(normalized_obs, deterministic=True)
 
                     for controller, action in zip(controllers_to_update, np.asarray(actions).reshape(-1)):
-                        apply_model_action_to_controller(controller, int(action))
+                        outcome = apply_model_action_to_controller(
+                            controller, int(action)
+                        )
+                        switched, forced = (
+                            outcome
+                            if isinstance(outcome, tuple)
+                            else (bool(outcome), False)
+                        )
+                        policy_decisions += 1
+                        policy_switches += int(bool(switched))
+                        policy_forced_switches += int(bool(forced))
+                        policy_invalid_actions += int(
+                            bool(
+                                controller.get(
+                                    "_last_model_action_was_invalid", False
+                                )
+                            )
+                        )
+                        adapter = controller.get("_map_agnostic_adapter")
+                        snapshot = getattr(adapter, "last_snapshot", None)
+                        if snapshot is not None:
+                            spillback_samples.append(
+                                float(snapshot.spillback)
+                            )
+                            starvation_samples.append(
+                                float(snapshot.max_starvation)
+                            )
 
             arrived, spawned, extended, recovered = sim.run_simulation_steps(
                 num_steps=decision_steps,
@@ -1894,7 +1981,23 @@ def run_all_model_episode(args: argparse.Namespace, scenario: TrafficScenario, s
         episode.close()
         norm_env.close()
 
-    return summarize_samples('all_model', seed, samples)
+    summary = summarize_samples(ALL_MODEL_CONTROLLER_LABEL, seed, samples)
+    summary['demand_mode'] = (
+        'fixed_route_replay' if getattr(args, 'demand_route_file', '') else 'active_population'
+    )
+    summary['demand_route_file'] = str(getattr(args, 'demand_route_file', '') or '')
+    summary['policy_decisions'] = policy_decisions
+    summary['policy_switches'] = policy_switches
+    summary['policy_forced_switches'] = policy_forced_switches
+    summary['policy_invalid_actions'] = policy_invalid_actions
+    summary['policy_switch_rate'] = (
+        policy_switches / max(1, policy_decisions)
+    )
+    summary['mean_tls_spillback'] = safe_mean(spillback_samples)
+    summary['max_tls_spillback'] = safe_max(spillback_samples)
+    summary['mean_tls_starvation'] = safe_mean(starvation_samples)
+    summary['max_tls_starvation'] = safe_max(starvation_samples)
+    return summary
 
 
 def run_fixed_cycle_episode(args: argparse.Namespace, scenario: TrafficScenario, seed: int) -> dict[str, float | int | str]:
@@ -2014,7 +2117,12 @@ def run_fixed_cycle_episode(args: argparse.Namespace, scenario: TrafficScenario,
     finally:
         episode.close()
 
-    return summarize_samples('fixed_cycle', seed, samples)
+    summary = summarize_samples('fixed_cycle', seed, samples)
+    summary['demand_mode'] = (
+        'fixed_route_replay' if getattr(args, 'demand_route_file', '') else 'active_population'
+    )
+    summary['demand_route_file'] = str(getattr(args, 'demand_route_file', '') or '')
+    return summary
 
 def aggregate_by_controller(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     controllers = sorted(set(str(row['controller']) for row in rows))

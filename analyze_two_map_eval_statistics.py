@@ -133,7 +133,9 @@ def summarize_metric(
         ci_low = math.nan
         ci_high = math.nan
 
-    if direction == "higher":
+    if abs(native_mean) < 1e-12:
+        aggregate_improvement = math.nan
+    elif direction == "higher":
         aggregate_improvement = 100.0 * (model_mean - native_mean) / native_mean
     else:
         aggregate_improvement = 100.0 * (native_mean - model_mean) / native_mean
