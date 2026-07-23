@@ -26,7 +26,7 @@ if os.path.isdir(SUMO_TOOLS) and SUMO_TOOLS not in sys.path:
     sys.path.insert(0, SUMO_TOOLS)
 
 # SUMO on macOS may start but then immediately close the TraCI connection if
-# PROJ cannot find proj.db.  SUMO_HOME usually points at .../share/sumo, while
+# PROJ cannot find proj.db. SUMO_HOME usually points at .../share/sumo, while
 # proj.db is usually one directory over in .../share/proj.  Do not rely on an
 # inherited empty/broken PROJ_DATA value; repair it before importing/running SUMO.
 SUMO_SHARE_DIR = os.path.dirname(os.environ["SUMO_HOME"])
