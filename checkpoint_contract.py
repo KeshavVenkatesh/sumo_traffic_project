@@ -190,6 +190,12 @@ class CheckpointContract:
             errors.append(f"invalid CMPP configuration: {exc}")
         if self.vecnormalize_required:
             errors.append("safe residual schema must use analytical normalization")
+        if not 0.0 <= float(self.residual_authority) <= 1.0:
+            errors.append("residual_authority must be in [0, 1]")
+        if float(self.residual_bound) < 0.0:
+            errors.append("residual_bound must be non-negative")
+        if float(self.max_baseline_regret) < 0.0:
+            errors.append("max_baseline_regret must be non-negative")
         if len(set(self.adapter_names)) != len(self.adapter_names):
             errors.append("adapter_names contains duplicates")
         if self.active_adapter is not None and self.active_adapter not in self.adapter_names:
