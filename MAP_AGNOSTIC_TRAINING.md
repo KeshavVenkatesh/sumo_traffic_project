@@ -1,298 +1,114 @@
-# Fast map-agnostic traffic-signal training (schema v3)
+Map-agnostic traffic-signal policy (schema v2)
 
-Schema v3 replaces the sequential “one full SUMO map per TLS task” campaign.
-One persistent SUMO process now controls every compatible traffic light on a
-map and emits one transition per TLS per decision. A central parameter-sharing
-PPO learner combines several maps while preserving a separate temporal GAE
-trajectory for each intersection.
+Schema v2 replaces the old compass-slot/five-action controller. It is designed for one shared checkpoint to operate on intersections whose lane counts,movement sets, and safe phase counts differ.
 
-## Why this is faster without changing the simulator
+What changed
 
-- SUMO remains exact; no surrogate traffic model is used.
-- Each map is parsed and started once for many PPO updates.
-- One map-wide TraCI snapshot caches lane and vehicle values for every TLS.
-- Static topology is transmitted/stored once per TLS, not once per timestep.
-- Dense GNN attention crops the 64-slot padding to the largest real
-  intersection in each minibatch.
-- Pre-generated route banks remove online OD-route construction and guarantee
-  repeatable demand.
-- Several independent map processes collect concurrently. There is still only
-  one learner and checkpoint writer, so updates cannot overwrite one another.
+A movement is an incoming-edge to outgoing-edge connection, not a fixedNB-L, lane-index, or phase-slot input position.
 
-The previous configuration needed 4,096 environment transitions before its
-first PPO update and obtained them by repeatedly restarting a 1,500-vehicle map
-for one TLS. Schema v3 obtains transitions from every TLS at the same simulated
-second. On the included Fremont smoke test, 2 decisions over 10 TLS produced 20
-transitions in about 0.2 seconds of collection after startup. Full-density
-speed is hardware- and map-dependent, so use the live throughput and ETA rather
-than extrapolating that smoke number.
+Queue, occupancy, speed, waiting, arrival rate, ETA bins, and downstream storage are normalized by local physical capacity, speed limit, or a fixed time reference. VecNormalize is deliberately disabled.
 
-## Quality/generalization protections
+An action is hold or one of the current intersection's safe candidate phases. The policy scores every candidate with the same neural function.
 
-- Inputs are physical movements rather than compass/phase slots.
-- Queue, density, speed, wait, pressure, downstream storage, arrival rate, and
-  starvation are bounded by local capacity or physical reference values.
-- Actions are `hold` or a valid native green candidate; minimum green, maximum
-  green, yellow/all-red clearance, invalid phases, and spillback safety remain
-  hard constrained.
-- A movement GNN and shared phase scorer are permutation equivariant.
-- Every map receives equal loss weight. Rare topology buckets receive equal
-  weight within each map.
-- The shared policy controls all TLS simultaneously during training, matching
-  deployment and exposing downstream interactions.
-- Sensor noise, calibration jitter, and rare channel dropout affect only
-  measured traffic features—not phase legality or topology.
-- A small normalized-MaxPressure imitation loss stabilizes early exploration,
-  then decays to exactly zero after the first quarter of training.
-- Held-out validation controls all TLS on each validation map. Best-checkpoint
-  selection weights the worst validation map 75% and the mean 25%.
-- Training refuses byte-identical/path-overlapping maps across splits.
+Candidate greens come from the active native tlLogic program; yellow,red-yellow, and duplicate states are excluded. Schema v2 inserts a conservative yellow plus all-red clearance between selected native greens.Phase membership retains protected (G) versus permissive/stop (g/s)service strength instead of collapsing both to an identical phase.
 
-Schema-v1 checkpoints are incompatible with the movement representation. A v2
-deployment checkpoint may still load because its observation/action tensors
-match, but it cannot resume the v3 multi-agent optimizer/schedule and does not
-contain the v3 training improvements. Use a new v3 model path.
+Minimum green, maximum green, yellow, all-red, invalid candidates, and downstream spillback constraints remain outside the learned policy.
 
-## 1. Environment
+The reward contains only bounded local ratios: discharge, served pressure,queue improvement/level, waiting, spillback, starvation, and switching.
 
-```bash
-cd ~/sumo_traffic_project
+A graph-attention encoder processes an unordered movement graph. Phase embeddings are pooled from the movements each phase serves.
 
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
+Training rotates one checkpoint through maps and intersections with balanced map sampling and randomized OD traffic.
+
+The old schema-v1 checkpoints have 30/46 inputs and five positional actions.They cannot be safely converted to schema v2. Keep them for historical comparisons, but use a new model path for schema-v2 training.
+
+Install
+
+Use the same SUMO installation as the rest of the repository, then install theRL dependencies:
+
 python -m pip install -r requirements-map-agnostic.txt
 
-# Adjust this only if SUMO is installed elsewhere.
-export SUMO_HOME=/usr/share/sumo
-export PYTHONPATH="$SUMO_HOME/tools:${PYTHONPATH:-}"
-sumo --version
-```
+Generate a varied map corpus
 
-Optional: if this succeeds, add `--use-libsumo` to training/validation commands
-to remove the TraCI socket boundary:
+generate_map_corpus.py submits standard Overpass QL queries—the same query language used at https://overpass-turbo.eu/—and converts accepted regions with netconvert. Large generated .osm and .net.xml files stay outside git.
 
-```bash
-python -c 'import libsumo; print("libsumo available")'
-```
-
-If an old sequential trainer is still running, inspect and stop only that
-trainer before starting v3:
-
-```bash
-pgrep -af 'train_map_agnostic_(multimap|policy).py'
-pkill -TERM -f 'train_map_agnostic_multimap.py'
-```
-
-## 2. Create the train/validation/test map corpus
-
-The generator uses Overpass QL (the same language as Overpass Turbo) and
-`netconvert`. Fremont and Santa Clara are not in the supplied training
-manifest; keep them as zero-shot benchmarks.
-
-```bash
 nohup python -u generate_map_corpus.py \
   --config map_corpus_regions.json \
   --output-dir generated_map_corpus \
   > generate_map_corpus.log 2>&1 &
-echo $! > generate_map_corpus.pid
 
-tail -f generate_map_corpus.log
-```
+Every query is also saved as .overpassql, so it can be pasted into OverpassTurbo for visual inspection. The resulting manifest has explicit train,validation, and test splits.
 
-The supplied region plan creates 15 training areas, 3 validation areas, and 2
-test areas (including randomized subareas). The output is
-`generated_map_corpus/manifest.json`.
+For a valid zero-shot experiment, do not put Fremont or Santa Clara in the training split. They should remain held-out benchmarks. Add many training regions whose intersection primitives cover three/four-way junctions,different lane counts, asymmetric approaches, and different safe phase counts.
 
-## 3. Pre-generate the training demand bank
+Validate topology support
 
-Three map-normalized traffic intensities and two route seeds give each map six
-long scenarios. Worker-specific shuffling prevents every round from seeing the
-same route first.
+TRAFFIC_NET_FILE=new_map.net.xml \
+python traffic_rl_map_agnostic_env.py --list-tls-json
 
-```bash
-nohup python -u generate_training_demand_bank.py \
+This prints the movement and phase counts for every usable TLS. If any exceedsMAX_MOVEMENTS=64 or MAX_PHASES=16, increase the constant before training;the code fails rather than silently dropping movements.
+
+Controllers with only one stable native green have no meaningful phase choice(these are commonly pedestrian or subordinate signal programs). Schema v2 leaves those programs under native SUMO timing rather than asking PPO to choose between one action and itself.
+
+Train one shared policy across maps
+
+Start with a short smoke test:
+
+python train_map_agnostic_multimap.py \
   --manifest generated_map_corpus/manifest.json \
   --splits train \
-  --output-dir training_demand_bank_v3 \
-  --rates 4,8,12 \
-  --seeds 101,102 \
-  --episode-seconds 7200 \
-  --workers 8 \
-  > generate_training_demand_bank_v3.log 2>&1 &
-echo $! > generate_training_demand_bank_v3.pid
-
-tail -f generate_training_demand_bank_v3.log
-```
-
-## 4. Smoke test
-
-This confirms SUMO, multiprocessing, PPO, masks, and checkpoint export before a
-long run:
-
-```bash
-python -u train_map_agnostic_multiagent.py \
-  --manifest generated_map_corpus/manifest.json \
-  --splits train \
-  --demand-bank-manifest training_demand_bank_v3/manifest.json \
-  --model-path models/map_agnostic_v3_smoke \
-  --best-model-path models/map_agnostic_v3_smoke_best \
   --rounds 1 \
-  --num-map-workers 1 \
-  --rollouts-per-map-visit 1 \
-  --rollout-steps 8 \
-  --episode-seconds 600 \
-  --decision-seconds 10 \
-  --embed-dim 32 \
-  --graph-layers 1 \
-  --no-validate-every-round \
-  --progress-file smoke_progress.json \
+  --max-tls-per-map 2 \
+  --steps-per-tls 2048 \
+  --num-envs 1 \
   --restart
-```
 
-## 5. Full training campaign
+Then run a real campaign:
 
-Run one `nohup` trainer. `--num-map-workers 4` already creates four parallel
-SUMO collectors; do not start independent trainers against the same model path.
-
-```bash
-nohup python -u train_map_agnostic_multiagent.py \
+nohup python -u train_map_agnostic_multimap.py \
   --manifest generated_map_corpus/manifest.json \
   --splits train \
-  --demand-bank-manifest training_demand_bank_v3/manifest.json \
-  --model-path models/traffic_signal_map_agnostic_v3 \
-  --best-model-path models/traffic_signal_map_agnostic_v3_best \
+  --model-path models/traffic_signal_map_agnostic_v2 \
   --rounds 4 \
-  --num-map-workers 4 \
-  --rollouts-per-map-visit 16 \
-  --rollout-steps 64 \
-  --episode-seconds 7200 \
-  --decision-seconds 10 \
-  --max-vehicle-center 1500 \
-  --target-density-range 2,10 \
-  --embed-dim 128 \
-  --graph-layers 2 \
-  --ppo-epochs 4 \
-  --minibatch-size 512 \
-  --teacher-coef 0.10 \
-  --teacher-decay-fraction 0.25 \
-  --validate-every-round \
-  --validation-splits validation \
-  --validation-seeds 9001,9002 \
-  --validation-episode-seconds 600 \
-  --validation-workers 2 \
-  --progress-file map_agnostic_multiagent_progress.json \
+  --max-tls-per-map 24 \
+  --steps-per-tls 10000 \
+  --num-envs 4 \
   --restart \
-  > map_agnostic_v3_training.log 2>&1 &
-echo $! > map_agnostic_v3_training.pid
-```
+  > map_agnostic_training.log 2>&1 &
 
-The central learner uses CUDA automatically when available; each SUMO worker
-uses one CPU thread. Increase map workers only if CPU/RAM headroom remains.
+There is one PPO learner and one checkpoint writer. --num-envs 4 parallelizesSUMO data collection inside each task. Do not launch independent nohup trainers that all write the same model file; they would overwrite each other's updates. Resume an interrupted campaign by repeating the command without--restart.
 
-Live partial percentages, per-map rollout percentages, throughput, and rough
-ETA:
+The traffic scenario sampler randomizes demand, initial population, OD routes,turns, and density around the supplied centers. The map orchestrator samples each map evenly, rather than letting a map with more traffic lights dominate.It samples a target in vehicles per passenger lane-kilometer (default2.0,10.0) and derives each map's active-vehicle target from its drivable lanelength. --max-vehicle-center is a hard compute cap, not the shared demand level for every map. Schema v2 also removes the legacy evaluator's silent750-vehicle clamp; set MAP_AGNOSTIC_MAX_ACTIVE_CAP if the default cap of 2000is too expensive for a machine.
 
-```bash
-watch -n 10 'python monitor_multiagent_training.py map_agnostic_multiagent_progress.json --refresh 0'
-```
+Training also adds small noise to dynamic sensor features by default(--observation-noise-std 0.01); topology, phase membership, masks, and turnsemantics remain exact. Evaluation automatically disables this noise.
 
-Useful diagnostics:
+Evaluate held-out maps
 
-```bash
-tail -f map_agnostic_v3_training.log
-ps -o pid,ppid,etime,%cpu,%mem,cmd -p "$(cat map_agnostic_v3_training.pid)"
-nvidia-smi
-```
+Santa Clara:
 
-To resume after interruption, repeat the exact full command without
-`--restart` and append to the log. The checkpoint stores an update-schedule
-fingerprint and refuses a mismatched resume command.
+TRAFFIC_NET_FILE=santa_clara.net.xml \
+MODEL_PATH=models/traffic_signal_map_agnostic_v2 \
+SEED_LIST=42,43,44,45,46 \
+MAX_PARALLEL=5 \
+nohup bash launch_map_agnostic_eval.sh \
+  > map_agnostic_santaclara_launcher.log 2>&1 &
 
-The deployable checkpoints are:
+Fremont:
 
-- `models/traffic_signal_map_agnostic_v3.zip` — last update.
-- `models/traffic_signal_map_agnostic_v3_best.zip` — best held-out validation
-  score; use this for final evaluation.
-- `*_trainer.pt` — optimizer/resume state, not the deployment file.
+TRAFFIC_NET_FILE=new_map.net.xml \
+MODEL_PATH=models/traffic_signal_map_agnostic_v2 \
+SEED_LIST=42,43,44,45,46 \
+MAX_PARALLEL=5 \
+OUTDIR=map_agnostic_fremont_eval \
+nohup bash launch_map_agnostic_eval.sh \
+  > map_agnostic_fremont_launcher.log 2>&1 &
 
-## 6. Thorough held-out evaluation
+Use 30 paired seeds for the final report. Model selection should use only validation maps; do not repeatedly tune on Fremont and still call Fremont an unseen test map.
 
-The evaluator generates one route file per map/rate/seed and replays that exact
-demand under native SUMO, normalized MaxPressure, and the learned policy. This
-eliminates the former “faster controller gets more spawned demand” bias.
+Show partial percentages while the jobs run:
 
-Thirty paired seeds, three rates (one above the training range), Fremont, Santa
-Clara, and the manifest test split form the exhaustive zero-shot campaign:
+python monitor_map_agnostic_eval.py --episode-seconds 1200 --refresh 30
 
-```bash
-SEEDS=$(seq -s, 1001 1030)
+Important evaluation note
 
-nohup python -u launch_comprehensive_evaluation.py \
-  --benchmarks fremont=new_map.net.xml,santaclara=santa_clara.net.xml \
-  --manifest generated_map_corpus/manifest.json \
-  --manifest-splits test \
-  --model-path models/traffic_signal_map_agnostic_v3_best \
-  --output-dir runs/map_agnostic_v3_comprehensive \
-  --rates 6,12,18 \
-  --seeds "$SEEDS" \
-  --episode-seconds 1200 \
-  --eval-steps 2500 \
-  --metrics-interval 20 \
-  --model-update-period 10 \
-  --max-vehicles 3000 \
-  --max-parallel 8 \
-  --demand-generation-workers 8 \
-  --progress-file comprehensive_eval_progress.json \
-  > comprehensive_eval.log 2>&1 &
-echo $! > comprehensive_eval.pid
-```
-
-To include the three historical five-action policies in the same fixed-demand
-campaign, add these flags (adjust paths to the actual checkpoints):
-
-```bash
-  --legacy-model mixed_tls_v1=models/mixed_tls_v1 \
-  --legacy-model robust_v1=models/robust_v1 \
-  --legacy-model original_40tls_good=models/original_40tls_good
-```
-
-Their observation/action semantics remain historical; the analyzer labels each
-separately and reports each one against native SUMO.
-
-This is 4 maps × 3 rates × 30 seeds × 3 controllers = 1,080 runs. For a
-smaller credible core report, omit `--manifest` and `--manifest-splits`; the
-Fremont/Santa Clara campaign is 540 runs.
-
-Monitor it:
-
-```bash
-watch -n 10 'python monitor_comprehensive_evaluation.py comprehensive_eval_progress.json'
-tail -f comprehensive_eval.log
-```
-
-Analysis runs automatically after all simulations. It can be repeated without
-rerunning SUMO:
-
-```bash
-python -u analyze_comprehensive_evaluation.py \
-  runs/map_agnostic_v3_comprehensive \
-  | tee runs/map_agnostic_v3_comprehensive/statistical_summary.log
-```
-
-The report includes:
-
-- learned vs native, MaxPressure vs native, and learned vs MaxPressure;
-- throughput, speed, mean/max queue, mean/max waiting, and recovery metrics;
-- paired wins/losses, two-sided 95% paired Student-t CIs, paired effect size;
-- Holm-adjusted p-values across all map/rate/metric tests;
-- pooled summaries plus the worst map/rate condition for every metric;
-- fixed-demand, equal-simulation-time, and equal-sample-grid fairness checks;
-- policy switch/forced-switch/invalid-action rates and local
-  spillback/starvation diagnostics in raw CSV rows.
-
-Important: interpret condition-level and worst-case results first. A good
-pooled mean does not establish map generalization if any held-out map has a
-large, clear regression. Do not tune the model after examining test/Fremont/
-Santa Clara outcomes and continue calling those maps unseen; make changes using
-training/validation maps, then run a fresh test campaign.
+The existing realistic simulator maintains a target number of active vehicles,so a controller that completes trips faster may cause additional vehicles to bespawned. Keep reporting spawned_total alongside arrivals and congestion. For the strongest publication-grade comparison, the next evaluation upgrade shouldpre-generate and replay an identical OD departure schedule for Native SUMO and the learned controller.
