@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from generate_fixed_demand import find_random_trips, generate_one
+from fixed_demand import count_scheduled_vehicles, sha256_file
 from train_map_agnostic_multimap import parse_csv, passenger_lane_km
 
 
@@ -111,8 +112,18 @@ def run_job(job: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     if output_csv.exists():
         with output_csv.open(newline="", encoding="utf-8") as handle:
             rows = list(csv.DictReader(handle))
+        identity_fields = {
+            "fixed_demand",
+            "scheduled_total",
+            "demand_route_sha256",
+            "demand_network_sha256",
+            "demand_scenario",
+            "demand_map_id",
+        }
         if rows and all(
-            row.get("controller") == job["controller"] for row in rows
+            row.get("controller") == job["controller"]
+            and identity_fields.issubset(row)
+            for row in rows
         ):
             return {"status": "reused", "job": job}
 
@@ -205,6 +216,9 @@ def run_job(job: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
         }
     with output_csv.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
+    route_file = Path(job["demand_route"]).resolve()
+    network_file = Path(job["net_file"]).resolve()
+    scheduled_total = count_scheduled_vehicles(route_file)
     for row in rows:
         if job["controller"] not in {
             "native_sumo",
@@ -213,6 +227,16 @@ def run_job(job: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
         }:
             row["controller"] = job["controller"]
         row["evaluation_wall_seconds"] = f"{wall_seconds:.6f}"
+        # Promotion gates need controller-independent demand identity in every
+        # raw row, not merely in the launcher job description.
+        row.update(
+            fixed_demand="1",
+            scheduled_total=str(scheduled_total),
+            demand_route_sha256=sha256_file(route_file),
+            demand_network_sha256=sha256_file(network_file),
+            demand_scenario=f"rate_{job['rate']:g}",
+            demand_map_id=str(job["map_name"]),
+        )
     if rows:
         fields = sorted(set().union(*(row.keys() for row in rows)))
         with output_csv.open("w", newline="", encoding="utf-8") as handle:

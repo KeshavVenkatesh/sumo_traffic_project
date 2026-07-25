@@ -60,15 +60,25 @@ def expand_regions(config: dict[str, Any], seed: int) -> list[dict[str, Any]]:
         center_lat, center_lon = map(float, region["center"])
         jitter_lat, jitter_lon = map(float, region.get("jitter", [0.0, 0.0]))
         half_height, half_width = map(float, region.get("half_size", [0.018, 0.022]))
+        size_jitter = float(region.get("half_size_jitter", 0.0))
+        if not 0.0 <= size_jitter < 1.0:
+            raise ValueError(
+                f"half_size_jitter for {region['name']!r} must be in [0, 1)"
+            )
         for index in range(count):
             lat = center_lat + rng.uniform(-jitter_lat, jitter_lat)
             lon = center_lon + rng.uniform(-jitter_lon, jitter_lon)
+            # Vary north/south and east/west extent independently. This avoids
+            # teaching the policy that every domain is the same rectangular
+            # crop while keeping every generated bounding box reproducible.
+            height = half_height * rng.uniform(1.0 - size_jitter, 1.0 + size_jitter)
+            width = half_width * rng.uniform(1.0 - size_jitter, 1.0 + size_jitter)
             suffix = f"_{index + 1}" if count > 1 else ""
             maps.append(
                 {
                     "name": f"{region['name']}{suffix}",
                     "split": region.get("split", "train"),
-                    "bbox": subarea_bbox(lat, lon, half_height, half_width),
+                    "bbox": subarea_bbox(lat, lon, height, width),
                 }
             )
     return maps

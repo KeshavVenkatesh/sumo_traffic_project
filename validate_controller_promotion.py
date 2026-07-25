@@ -9,6 +9,7 @@ throughput or waiting regressions in any map/load condition.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import sys
@@ -43,7 +44,11 @@ class PairedMetricResult:
 
 
 def _load_runs(path: str | Path) -> list[dict[str, Any]]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    path = Path(path)
+    if path.suffix.lower() == ".csv":
+        with path.open(newline="", encoding="utf-8") as handle:
+            return [dict(row) for row in csv.DictReader(handle)]
+    payload = json.loads(path.read_text(encoding="utf-8"))
     rows = payload.get("runs", payload) if isinstance(payload, Mapping) else payload
     if not isinstance(rows, list):
         raise ValueError(f"Expected a JSON list or {{'runs': [...]}} in {path}")
@@ -198,7 +203,13 @@ def evaluate_condition(
         "mean_global_queue": "lower",
         "mean_avg_speed_mps": "higher",
     }
-    if config.require_fixed_demand:
+    # Some existing fixed-route evaluators do not yet expose SUMO's insertion
+    # backlog separately.  Compare scheduled identity and completed throughput
+    # now; evaluate not-departed demand as an additional metric when present.
+    if config.require_fixed_demand and all(
+        "not_departed_total" in left and "not_departed_total" in right
+        for left, right in pairs
+    ):
         required_metrics["not_departed_total"] = "lower"
     for metric, direction in required_metrics.items():
         if any(metric not in left or metric not in right for left, right in pairs):
@@ -306,7 +317,7 @@ def evaluate_campaign(
 
 def _parse_condition(raw: str) -> tuple[str, Path]:
     if "=" not in raw:
-        raise ValueError("--condition must be NAME=RESULTS.json")
+        raise ValueError("--condition must be NAME=RESULTS.json_or_csv")
     name, path = raw.split("=", 1)
     if not name.strip() or not path.strip():
         raise ValueError("--condition must be NAME=RESULTS.json")

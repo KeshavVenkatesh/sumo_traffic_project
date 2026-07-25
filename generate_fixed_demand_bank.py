@@ -279,6 +279,19 @@ def generate(args: argparse.Namespace) -> Path:
         "schema_version": FIXED_DEMAND_SCHEMA_VERSION,
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "generator": str(random_trips),
+        # Preserve the schema-v3 trainer's established demand-bank API while
+        # also exposing the richer immutable-bank records below.
+        "episode_seconds": float(args.end_seconds - args.begin_seconds),
+        "routes": [
+            {
+                "net_file": str((output_dir / record["net_file"]).resolve()),
+                "route_file": str((output_dir / record["route_file"]).resolve()),
+                "seed": record["seed"],
+                "scheduled_records": record["scheduled_vehicles"],
+                "route_sha256": record["route_sha256"],
+            }
+            for record in records
+        ],
         "records": records,
     }
     temporary = manifest.with_suffix(".json.tmp")

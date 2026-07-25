@@ -243,6 +243,19 @@ class SafeResidualMapAgnosticPolicy(MapAgnosticMaskablePolicy):
             )
         self.active_adapter = name
 
+    def set_residual_authority(self, authority: float) -> None:
+        """Update learned authority without rebuilding the policy/optimizer.
+
+        Curriculum drivers may call this between rollout batches.  Keeping the
+        value in the policy constructor state also ensures subsequent SB3 saves
+        record the currently deployed authority.
+        """
+
+        authority = float(authority)
+        if not 0.0 <= authority <= 1.0:
+            raise ValueError("residual authority must be in [0, 1]")
+        self.residual_authority = authority
+
     def freeze_for_adapter(self, name: str) -> None:
         self.set_active_adapter(name)
         for parameter in self.parameters():
