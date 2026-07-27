@@ -1,0 +1,104 @@
+{
+  "schema_version": 3,
+  "validation_mode": "deterministic_all_tls_exact_sumo",
+  "model_path": "/users/sriramv/sumo_traffic_project/models/map_agnostic_multiagent_v3.zip",
+  "splits": [
+    "validation"
+  ],
+  "seeds": [
+    1001,
+    1002,
+    1003
+  ],
+  "map_scores": {
+    "/users/sriramv/sumo_traffic_project/generated_map_corpus/sacramento/sacramento.net.xml": -0.13430193066596985,
+    "/users/sriramv/sumo_traffic_project/generated_map_corpus/las_vegas/las_vegas.net.xml": -0.11843661467234294,
+    "/users/sriramv/sumo_traffic_project/generated_map_corpus/salt_lake_city/salt_lake_city.net.xml": -0.1456194370985031
+  },
+  "mean_map_score": -0.1327859941456053,
+  "worst_map_score": -0.1456194370985031,
+  "selection_score": -0.14241107636027867,
+  "records": [
+    {
+      "net_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus/las_vegas/las_vegas.net.xml",
+      "seed": 1001,
+      "tls": 250,
+      "score": -0.11999951303005219,
+      "unweighted_mean_reward": -0.12778492271900177,
+      "wall_seconds": 3959.944094522856,
+      "transitions": 60000
+    },
+    {
+      "net_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus/sacramento/sacramento.net.xml",
+      "seed": 1002,
+      "tls": 199,
+      "score": -0.13855430483818054,
+      "unweighted_mean_reward": -0.07411215454339981,
+      "wall_seconds": 4199.598567879992,
+      "transitions": 47760
+    },
+    {
+      "net_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus/sacramento/sacramento.net.xml",
+      "seed": 1001,
+      "tls": 199,
+      "score": -0.12995155155658722,
+      "unweighted_mean_reward": -0.07398706674575806,
+      "wall_seconds": 4232.674336900935,
+      "transitions": 47760
+    },
+    {
+      "net_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus/sacramento/sacramento.net.xml",
+      "seed": 1003,
+      "tls": 199,
+      "score": -0.13439993560314178,
+      "unweighted_mean_reward": -0.07459661364555359,
+      "wall_seconds": 4239.989617170999,
+      "transitions": 47760
+    },
+    {
+      "net_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus/las_vegas/las_vegas.net.xml",
+      "seed": 1003,
+      "tls": 250,
+      "score": -0.11826429516077042,
+      "unweighted_mean_reward": -0.12841996550559998,
+      "wall_seconds": 3897.765262106899,
+      "transitions": 60000
+    },
+    {
+      "net_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus/las_vegas/las_vegas.net.xml",
+      "seed": 1002,
+      "tls": 250,
+      "score": -0.11704603582620621,
+      "unweighted_mean_reward": -0.12516644597053528,
+      "wall_seconds": 3969.45780430804,
+      "transitions": 60000
+    },
+    {
+      "net_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus/salt_lake_city/salt_lake_city.net.xml",
+      "seed": 1002,
+      "tls": 272,
+      "score": -0.13772661983966827,
+      "unweighted_mean_reward": -0.14769509434700012,
+      "wall_seconds": 4027.0712626220193,
+      "transitions": 65280
+    },
+    {
+      "net_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus/salt_lake_city/salt_lake_city.net.xml",
+      "seed": 1001,
+      "tls": 272,
+      "score": -0.15327270328998566,
+      "unweighted_mean_reward": -0.15888378024101257,
+      "wall_seconds": 4039.860364916036,
+      "transitions": 65280
+    },
+    {
+      "net_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus/salt_lake_city/salt_lake_city.net.xml",
+      "seed": 1003,
+      "tls": 272,
+      "score": -0.1458589881658554,
+      "unweighted_mean_reward": -0.14926891028881073,
+      "wall_seconds": 3950.8740663058124,
+      "transitions": 65280
+    }
+  ]
+}
