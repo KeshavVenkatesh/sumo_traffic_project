@@ -107,3 +107,6 @@ generated_map_corpus/
 # Models must remain included
 !models/
 !models/**
+
+# Local run-directory pointers
+.last_*_dir
