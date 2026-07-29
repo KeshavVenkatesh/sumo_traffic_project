@@ -1,112 +1,59 @@
+# Python
 __pycache__/
-*.pyc
-.DS_Store
-.venv/
+*.py[cod]
+.pytest_cache/
+.venv*/
+venv/
+env/
 
-# Logs, process/progress state, and backups
+# Local configuration
+.env
+.DS_Store
+
+# Runtime state
 *.log
 *.pid
 *_progress.json
-*.bak
-*.before_*.bak
-*.py.before_*.bak
+.last_*
+latest_*_root.txt
+.usable_*
+realcommand.txt
+watched_lane_*_metrics.csv
 
-# Model and optimizer artifacts
-models/*.zip
-models/*.pkl
-models/*_trainer.pt
-models/*_map_agnostic.json
-
-# TensorBoard / campaign outputs
+# Training and evaluation outputs
 runs/
 comprehensive_eval/
 map_agnostic_eval_*/
 split_eval_*/
 split_eval_map_agnostic_*/
 parallel_eval_*/
-.last_map_agnostic_eval_dir
-
-# Generated map and demand corpora
-generated_map_corpus/
-training_demand_bank*/
-.cache/map_agnostic_tls/
-large_region.net.xml
-
-# Generated SUMO routes/trips
-background_santaclara_train_*.rou.xml
-background_train_*.rou.xml
-background_train_all_*.rou.xml
-random_drive_dynamic_turns_*.rou.xml
-native_sumo_vs_model_*.rou.xml
-native_sumo_signals_*.rou.xml
-trips.trips.xml
-
-# Generated evaluation tables
-baseline_native_vs_old_model_1500.csv
-baseline_native_vs_old_model_1500.json
-native_vs_model_*.csv
-native_vs_model_*.json
-fixed_vs_model_*.csv
-fixed_vs_model_*.json
-
-# One-time local patch/sampling files
-patch_*.py
-.usable_santaclara_tls.txt
-
-# Python virtual environments
-.venv/
-venv/
-.venv-traffic/
-env/
-
-# Trained models and checkpoints
-models/
-checkpoints/
-*.pt
-*.pth
-
-# Generated training datasets
-training_demand_bank_v3/
-generated_map_corpus/
-
-# Training output
-runs/
+two_map_*_eval_*/
+map_agnostic_*_validation/
+schema_smoke/
 sumo_worker_logs/
 wandb/
-*.log
 events.out.tfevents.*
 
-# Python/cache files
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-
-# Local configuration
-.env
-.DS_Store
-
-# Do not upload Python environments
-.venv/
-venv/
-.venv-traffic/
-env/
-
-# Do not upload generated caches/logs
-__pycache__/
-*.pyc
-.pytest_cache/
-runs/
-sumo_worker_logs/
-*.log
-
-# Generated datasets
-training_demand_bank_v3/
+# Generated maps, demand, and caches
 generated_map_corpus/
+training_demand_bank*/
+.cache/
+.route_cache/
+*.osm
+background_santa_clara_train_*.rou.xml
+background_train_*.rou.xml
+background_train_all_*.rou.xml
+native_sumo_signals_*.rou.xml
+native_sumo_vs_model_*.rou.xml
+random_drive_dynamic_turns_*_[0-9]*.rou.xml
+trips.trips.xml
 
-# Models must remain included
-!models/
-!models/**
-
-# Local run-directory pointers
-.last_*_dir
+# Models and packaged artifacts belong in GitHub Releases
+models/*
+!models/README.md
+checkpoints/
+*.zip
+*.pkl
+*.pt
+*.pth
+*.tar.gz

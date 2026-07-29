@@ -873,7 +873,7 @@ def parse_args() -> argparse.Namespace:
         help="Optional comma-separated .net.xml files in addition to the manifest.",
     )
     parser.add_argument("--splits", default="train")
-    parser.add_argument("--model-path", default="models/traffic_signal_map_agnostic_v3")
+    parser.add_argument("--model-path", default="models/map_agnostic_multiagent_v3")
     parser.add_argument("--best-model-path", default="")
     parser.add_argument("--demand-bank-manifest", default="")
     parser.add_argument("--rounds", type=int, default=4)

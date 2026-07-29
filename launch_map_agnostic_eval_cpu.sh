@@ -10,7 +10,7 @@ if [[ -z "${VIRTUAL_ENV:-}" && -f .venv/bin/activate ]]; then
 fi
 
 NET_FILE="${TRAFFIC_NET_FILE:-new_map.net.xml}"
-MODEL_PATH="${MODEL_PATH:-models/traffic_signal_map_agnostic_v3_best}"
+MODEL_PATH="${MODEL_PATH:-models/map_agnostic_multiagent_v3_best}"
 SEED_LIST="${SEED_LIST:-42,43,44}"
 MAX_PARALLEL="${MAX_PARALLEL:-4}"
 SKIP_NATIVE="${SKIP_NATIVE:-0}"

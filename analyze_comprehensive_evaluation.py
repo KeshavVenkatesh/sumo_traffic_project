@@ -17,7 +17,7 @@ try:
     from scipy.stats import ttest_1samp
 except ImportError as exc:  # pragma: no cover - installation guard
     raise ImportError(
-        "Install requirements-map-agnostic.txt (SciPy is required for "
+        "Install requirements.txt (SciPy is required for "
         "paired p-values)."
     ) from exc
 

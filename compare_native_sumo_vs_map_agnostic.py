@@ -87,7 +87,7 @@ cmp.get_observation = map_agnostic_observation
 cmp.get_observation_batch = map_agnostic_observation_batch
 cmp.valid_action_mask_for_controller = map_agnostic_action_mask
 cmp.apply_model_action_to_controller = apply_map_agnostic_action
-cmp.MODEL_DEFAULT = "models/traffic_signal_map_agnostic_v3"
+cmp.MODEL_DEFAULT = "models/map_agnostic_multiagent_v3"
 
 # Schema v2 uses bounded physical ratios and must never load map-specific
 # VecNormalize statistics from a legacy checkpoint with a similar file name.
