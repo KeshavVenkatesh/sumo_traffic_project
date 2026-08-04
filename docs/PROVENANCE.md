@@ -2,9 +2,13 @@
 
 ## Source snapshot
 
-The clean repository was produced from Git commit:
+The cleaned source was first published at Git commit:
 
 `b2b3ffcd7e766831ce12a2cf38277ee152e5f8e9`
+
+The exact source tree used for the completed comprehensive evaluation was:
+
+`39408d577806b8136c6b0290394ecd4c532b2f47`
 
 The later held-out snapshot was preserved as:
 
@@ -19,14 +23,33 @@ Seven recovered schema-v3 checkpoint, metadata, validation, and trainer-state
 files are distributed in the `schema-v3-checkpoints-20260727` GitHub Release.
 The release includes `SHA256SUMS` for integrity verification.
 
-## Interrupted evaluation
+The deployment checkpoint selected by held-out validation and used in the
+completed evaluation was `models/map_agnostic_multiagent_v3_best.zip`, with
+SHA-256 digest:
 
-The July 2026 held-out evaluation campaign did not finish because its compute
-machine permanently shut down. Partial results from that campaign must not be
-treated as final experimental results.
+`be832797883d589441fd27d52b87884320a624af024eab0dac4ed8d9860f0706`
 
-The evaluation should be rerun from the beginning using fixed paired demand for
-every controller. The rerun should preserve:
+## Completed comprehensive evaluation
+
+An immutable comprehensive evaluation completed on July 30, 2026. It covered
+Fremont, Santa Clara, Fresno, and San Diego; three demand rates; 30 paired
+seeds; and native SUMO, normalized MaxPressure, and the learned schema-v3
+controller. All 1,080 runs completed, fixed-demand fairness checks passed, and
+the learned policy produced zero invalid actions.
+
+The concise verified record is stored in
+`results/map_agnostic_multiagent_v3/`. Raw generated routes, per-run logs, and
+the 1,080 raw result files remain outside Git because they are generated
+campaign artifacts.
+
+## Earlier interrupted evaluation
+
+An earlier July 2026 held-out campaign did not finish because its compute
+machine permanently shut down. Its partial results remain superseded and must
+not be combined with the completed July 30 campaign.
+
+Any future rerun should use fixed paired demand for every controller and
+preserve:
 
 - Exact network and route files
 - SHA-256 hashes of evaluation inputs
