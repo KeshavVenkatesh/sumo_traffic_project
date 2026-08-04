@@ -6,11 +6,20 @@ lane, and phase layouts.
 
 ## Repository status
 
-- This clean source tree is based on commit `b2b3ffcd7e766831ce12a2cf38277ee152e5f8e9`.
-- The July 2026 held-out evaluation was interrupted when its compute machine shut down.
-- Incomplete evaluation outputs are not presented as final results.
+- The cleaned schema-v3 source was merged at commit
+  `39408d577806b8136c6b0290394ecd4c532b2f47`.
+- The frozen best checkpoint completed an immutable 1,080-run evaluation on
+  July 30, 2026, using paired fixed demand on Fremont, Santa Clara, Fresno,
+  and San Diego.
+- The learned controller beat native SUMO in all 12 map/rate conditions for
+  arrivals, speed, mean queue, max queue, and recovery interventions after
+  Holm correction. Waiting-time results were not uniformly positive.
 - Model checkpoints are distributed through a GitHub Release.
-- Generated maps, demand files, checkpoints, logs, and evaluation outputs are not committed.
+- Generated maps, demand files, checkpoints, logs, and raw evaluation outputs
+  are not committed.
+
+The verified evaluation scope, checkpoint hash, and result summary are in
+[results/map_agnostic_multiagent_v3](results/map_agnostic_multiagent_v3).
 
 ## Setup
 

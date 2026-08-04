@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "model": {
+    "name": "map_agnostic_multiagent_v3_best",
+    "checkpoint_file": "models/map_agnostic_multiagent_v3_best.zip",
+    "checkpoint_release": "schema-v3-checkpoints-20260727",
+    "checkpoint_sha256": "be832797883d589441fd27d52b87884320a624af024eab0dac4ed8d9860f0706",
+    "source_commit": "39408d577806b8136c6b0290394ecd4c532b2f47"
+  },
+  "evaluation": {
+    "completed_date": "2026-07-30",
+    "status": "passed",
+    "maps": [
+      {
+        "name": "fremont",
+        "role": "external_zero_shot"
+      },
+      {
+        "name": "santa_clara",
+        "role": "external_zero_shot"
+      },
+      {
+        "name": "fresno",
+        "role": "held_out_test"
+      },
+      {
+        "name": "san_diego",
+        "role": "held_out_test"
+      }
+    ],
+    "demand_rates_trips_per_lane_km_hour": [
+      6,
+      12,
+      18
+    ],
+    "seed_first": 1001,
+    "seed_last": 1030,
+    "seed_count": 30,
+    "controllers": [
+      "native_sumo",
+      "max_pressure",
+      "all_model"
+    ],
+    "episode_seconds": 1200,
+    "conditions": 12,
+    "fixed_route_schedules": 360,
+    "runs": 1080,
+    "fixed_demand_fairness": "passed",
+    "policy_invalid_actions": 0,
+    "immutable_completion_gate": "passed"
+  },
+  "learned_vs_native_pooled": {
+    "arrivals_increase_percent": 7.42,
+    "mean_speed_increase_percent": 8.42,
+    "mean_queue_reduction_percent": 22.58,
+    "max_queue_reduction_percent": 29.38,
+    "mean_wait_reduction_percent": 19.64,
+    "max_wait_reduction_percent": 18.63,
+    "recovery_interventions_reduction_percent": 45.15
+  },
+  "learned_vs_native_condition_robustness": {
+    "holm_clear_positive_conditions": {
+      "arrivals": 12,
+      "mean_speed": 12,
+      "mean_queue": 12,
+      "max_queue": 12,
+      "recovery_interventions": 12
+    },
+    "total_conditions": 12,
+    "waiting_metrics_uniformly_positive": false
+  },
+  "held_out_fresno_and_san_diego": {
+    "arrivals_increase_percent_range": [
+      1.57,
+      6.82
+    ],
+    "mean_speed_increase_percent_range": [
+      3.79,
+      11.93
+    ],
+    "mean_queue_reduction_percent_range": [
+      10.62,
+      28.64
+    ],
+    "max_queue_reduction_percent_range": [
+      11.75,
+      39.98
+    ],
+    "recovery_interventions_reduction_percent_range": [
+      30.57,
+      39.67
+    ],
+    "max_pressure_outperformed_learned_controller": true
+  }
+}
