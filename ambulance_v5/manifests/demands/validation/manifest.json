@@ -1,0 +1,346 @@
+{
+  "schema_version": 2,
+  "generator": "generate_training_demand_bank.py",
+  "episode_seconds": 1200.0,
+  "rates": [
+    6.0,
+    12.0,
+    18.0
+  ],
+  "seeds": [
+    9001,
+    9002
+  ],
+  "routes": [
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/las_vegas/las_vegas.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/las_vegas/rate_18p0/seed_9001.rou.xml",
+      "period_seconds": 0.38779638890207146,
+      "scheduled_records": 3095,
+      "reused": false,
+      "trips_per_lane_km_hour": 18.0,
+      "network_sha256": "03a91e61ce0a2e3a9053cf28cae0fb9944c8a695c6705c2c148a220108f193ac",
+      "route_sha256": "d06f07c05c46121539f8af02ea5161eb71719feda08bf4804b20f3d88f24414f"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/las_vegas/las_vegas.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/las_vegas/rate_18p0/seed_9002.rou.xml",
+      "period_seconds": 0.38779638890207146,
+      "scheduled_records": 3095,
+      "reused": false,
+      "trips_per_lane_km_hour": 18.0,
+      "network_sha256": "03a91e61ce0a2e3a9053cf28cae0fb9944c8a695c6705c2c148a220108f193ac",
+      "route_sha256": "9e355f9bd75ed3065850effddeff899c3faa6068d2229ec20fb5fb41f97c2f0c"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/las_vegas/las_vegas.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/las_vegas/rate_12p0/seed_9001.rou.xml",
+      "period_seconds": 0.5816945833531072,
+      "scheduled_records": 2063,
+      "reused": false,
+      "trips_per_lane_km_hour": 12.0,
+      "network_sha256": "03a91e61ce0a2e3a9053cf28cae0fb9944c8a695c6705c2c148a220108f193ac",
+      "route_sha256": "5faef669a1711aa81ce0d123a6e125a481582966ca710460a8b97acfab10f342"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/las_vegas/las_vegas.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/las_vegas/rate_12p0/seed_9002.rou.xml",
+      "period_seconds": 0.5816945833531072,
+      "scheduled_records": 2063,
+      "reused": false,
+      "trips_per_lane_km_hour": 12.0,
+      "network_sha256": "03a91e61ce0a2e3a9053cf28cae0fb9944c8a695c6705c2c148a220108f193ac",
+      "route_sha256": "393128c26f3052695b13bc6f2b939b286d12c9a6a28c3a7a6a532e4bff69010f"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/las_vegas/las_vegas.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/las_vegas/rate_6p0/seed_9001.rou.xml",
+      "period_seconds": 1.1633891667062144,
+      "scheduled_records": 1032,
+      "reused": false,
+      "trips_per_lane_km_hour": 6.0,
+      "network_sha256": "03a91e61ce0a2e3a9053cf28cae0fb9944c8a695c6705c2c148a220108f193ac",
+      "route_sha256": "8a02a66bd46600c6bfcff99b7c7e32d20fd993b9abdc336ee40bf9c95ccef476"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/las_vegas/las_vegas.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/las_vegas/rate_6p0/seed_9002.rou.xml",
+      "period_seconds": 1.1633891667062144,
+      "scheduled_records": 1032,
+      "reused": false,
+      "trips_per_lane_km_hour": 6.0,
+      "network_sha256": "03a91e61ce0a2e3a9053cf28cae0fb9944c8a695c6705c2c148a220108f193ac",
+      "route_sha256": "514c301e7b90b8d7f8b2ca59a075094b207cc1088b1f0306768d64374fb6090f"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/minneapolis/minneapolis.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/minneapolis/rate_18p0/seed_9001.rou.xml",
+      "period_seconds": 0.38018313649794894,
+      "scheduled_records": 3157,
+      "reused": false,
+      "trips_per_lane_km_hour": 18.0,
+      "network_sha256": "486b64c5299e86ea020a45c2dee0e6a06f38b12318b7f759f320842057ce38be",
+      "route_sha256": "b1ebde416a26bc8dc968648a57aa2686bde84cd32582a1775da6c7107f5a601f"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/minneapolis/minneapolis.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/minneapolis/rate_18p0/seed_9002.rou.xml",
+      "period_seconds": 0.38018313649794894,
+      "scheduled_records": 3157,
+      "reused": false,
+      "trips_per_lane_km_hour": 18.0,
+      "network_sha256": "486b64c5299e86ea020a45c2dee0e6a06f38b12318b7f759f320842057ce38be",
+      "route_sha256": "a89bad00baaf8f7882286c1ab8cbbfbe11034623d8c8a98e885650983257d366"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/minneapolis/minneapolis.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/minneapolis/rate_12p0/seed_9001.rou.xml",
+      "period_seconds": 0.5702747047469234,
+      "scheduled_records": 2105,
+      "reused": false,
+      "trips_per_lane_km_hour": 12.0,
+      "network_sha256": "486b64c5299e86ea020a45c2dee0e6a06f38b12318b7f759f320842057ce38be",
+      "route_sha256": "f73aa7508fd3c256608a37ec2e0f6ba98f26dd68db1f461d268a9f5f5111127c"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/minneapolis/minneapolis.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/minneapolis/rate_12p0/seed_9002.rou.xml",
+      "period_seconds": 0.5702747047469234,
+      "scheduled_records": 2105,
+      "reused": false,
+      "trips_per_lane_km_hour": 12.0,
+      "network_sha256": "486b64c5299e86ea020a45c2dee0e6a06f38b12318b7f759f320842057ce38be",
+      "route_sha256": "9969a67f41e68d9f7a469ba2787a0868504a45a6736c70c5ce5eb4e0091edff3"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/minneapolis/minneapolis.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/minneapolis/rate_6p0/seed_9001.rou.xml",
+      "period_seconds": 1.1405494094938469,
+      "scheduled_records": 1053,
+      "reused": false,
+      "trips_per_lane_km_hour": 6.0,
+      "network_sha256": "486b64c5299e86ea020a45c2dee0e6a06f38b12318b7f759f320842057ce38be",
+      "route_sha256": "ef4beb33b8dc200eb9c87fed5ff9aeb2dd56a7bf07d26a16ea574428c9e2259f"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/minneapolis/minneapolis.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/minneapolis/rate_6p0/seed_9002.rou.xml",
+      "period_seconds": 1.1405494094938469,
+      "scheduled_records": 1053,
+      "reused": false,
+      "trips_per_lane_km_hour": 6.0,
+      "network_sha256": "486b64c5299e86ea020a45c2dee0e6a06f38b12318b7f759f320842057ce38be",
+      "route_sha256": "2631d1dbb9acf20933ab7417a264ae8d1e6d622ecafdee40596b97b1bf70484d"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sacramento/sacramento.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/sacramento/rate_18p0/seed_9001.rou.xml",
+      "period_seconds": 0.590449287919637,
+      "scheduled_records": 2033,
+      "reused": false,
+      "trips_per_lane_km_hour": 18.0,
+      "network_sha256": "59e4105d5821c935bfc5684a2c1a9e9f7b68da025bc12b642c3432eea46d8507",
+      "route_sha256": "85f0422d7d5336b3431d7fafb34b992c4fd760c0e3e66ea7a2b4936084647103"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sacramento/sacramento.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/sacramento/rate_18p0/seed_9002.rou.xml",
+      "period_seconds": 0.590449287919637,
+      "scheduled_records": 2033,
+      "reused": false,
+      "trips_per_lane_km_hour": 18.0,
+      "network_sha256": "59e4105d5821c935bfc5684a2c1a9e9f7b68da025bc12b642c3432eea46d8507",
+      "route_sha256": "a299177585040c090bacb12b400fbff197faaaf381e11f1940227636fd686107"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sacramento/sacramento.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/sacramento/rate_12p0/seed_9001.rou.xml",
+      "period_seconds": 0.8856739318794555,
+      "scheduled_records": 1355,
+      "reused": false,
+      "trips_per_lane_km_hour": 12.0,
+      "network_sha256": "59e4105d5821c935bfc5684a2c1a9e9f7b68da025bc12b642c3432eea46d8507",
+      "route_sha256": "1248e0f1b63f3a09cbe72622a3015b940afea14b2c9b26d306149eebe8330d74"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sacramento/sacramento.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/sacramento/rate_12p0/seed_9002.rou.xml",
+      "period_seconds": 0.8856739318794555,
+      "scheduled_records": 1355,
+      "reused": false,
+      "trips_per_lane_km_hour": 12.0,
+      "network_sha256": "59e4105d5821c935bfc5684a2c1a9e9f7b68da025bc12b642c3432eea46d8507",
+      "route_sha256": "6742c9c69125101fc123c2d6f197c9f384ec93a8c9ed1d9d46451933ea8dbf8f"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sacramento/sacramento.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/sacramento/rate_6p0/seed_9001.rou.xml",
+      "period_seconds": 1.771347863758911,
+      "scheduled_records": 678,
+      "reused": false,
+      "trips_per_lane_km_hour": 6.0,
+      "network_sha256": "59e4105d5821c935bfc5684a2c1a9e9f7b68da025bc12b642c3432eea46d8507",
+      "route_sha256": "46a945e5a9c9c39d51634649e5f9ec2d93d3b671a231d46ab3bc3e71a9df8cbd"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sacramento/sacramento.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/sacramento/rate_6p0/seed_9002.rou.xml",
+      "period_seconds": 1.771347863758911,
+      "scheduled_records": 678,
+      "reused": false,
+      "trips_per_lane_km_hour": 6.0,
+      "network_sha256": "59e4105d5821c935bfc5684a2c1a9e9f7b68da025bc12b642c3432eea46d8507",
+      "route_sha256": "d684340d13a3fb999f060c9e15c745b650341094b7f2ed4bbe8c4f07628faffa"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/salt_lake_city/salt_lake_city.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/salt_lake_city/rate_18p0/seed_9001.rou.xml",
+      "period_seconds": 0.48665728083212534,
+      "scheduled_records": 2466,
+      "reused": false,
+      "trips_per_lane_km_hour": 18.0,
+      "network_sha256": "3a231dfdaf771fea62c677130f4d4aae6b80701808c6d16bd9bdf0ea2013bfa1",
+      "route_sha256": "d5f7b0b9f9b08e41451bb0a5fd0df85762ede6956bfc67377af2617e2ef47ffe"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/salt_lake_city/salt_lake_city.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/salt_lake_city/rate_18p0/seed_9002.rou.xml",
+      "period_seconds": 0.48665728083212534,
+      "scheduled_records": 2466,
+      "reused": false,
+      "trips_per_lane_km_hour": 18.0,
+      "network_sha256": "3a231dfdaf771fea62c677130f4d4aae6b80701808c6d16bd9bdf0ea2013bfa1",
+      "route_sha256": "d0ba72734c41405b212fb7983440d1fce77d8ead261f43350e44d2807f8b75ce"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/salt_lake_city/salt_lake_city.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/salt_lake_city/rate_12p0/seed_9001.rou.xml",
+      "period_seconds": 0.729985921248188,
+      "scheduled_records": 1644,
+      "reused": false,
+      "trips_per_lane_km_hour": 12.0,
+      "network_sha256": "3a231dfdaf771fea62c677130f4d4aae6b80701808c6d16bd9bdf0ea2013bfa1",
+      "route_sha256": "b103778dcf8cb1302e1267210826d53006826aa5a3d4bde2b0c22fe000b89d8b"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/salt_lake_city/salt_lake_city.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/salt_lake_city/rate_12p0/seed_9002.rou.xml",
+      "period_seconds": 0.729985921248188,
+      "scheduled_records": 1644,
+      "reused": false,
+      "trips_per_lane_km_hour": 12.0,
+      "network_sha256": "3a231dfdaf771fea62c677130f4d4aae6b80701808c6d16bd9bdf0ea2013bfa1",
+      "route_sha256": "8d01bd898690df0ac4eec882e2ddc97beb72cf7701788d2e36dde644c3b79faf"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/salt_lake_city/salt_lake_city.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/salt_lake_city/rate_6p0/seed_9001.rou.xml",
+      "period_seconds": 1.459971842496376,
+      "scheduled_records": 822,
+      "reused": false,
+      "trips_per_lane_km_hour": 6.0,
+      "network_sha256": "3a231dfdaf771fea62c677130f4d4aae6b80701808c6d16bd9bdf0ea2013bfa1",
+      "route_sha256": "943c605bcd3807e5ebc6325478b9593f3ccb19b56b2c92ba7164e284773d87e8"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/salt_lake_city/salt_lake_city.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/salt_lake_city/rate_6p0/seed_9002.rou.xml",
+      "period_seconds": 1.459971842496376,
+      "scheduled_records": 822,
+      "reused": false,
+      "trips_per_lane_km_hour": 6.0,
+      "network_sha256": "3a231dfdaf771fea62c677130f4d4aae6b80701808c6d16bd9bdf0ea2013bfa1",
+      "route_sha256": "d98856dd24459d5e3d9d50624aa0232c208bc0ce5b9476722d9a621423f4b619"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/valencia/valencia.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/valencia/rate_18p0/seed_9001.rou.xml",
+      "period_seconds": 0.7079900643506275,
+      "scheduled_records": 1695,
+      "reused": false,
+      "trips_per_lane_km_hour": 18.0,
+      "network_sha256": "817b84ac044209529c54a1e642dcb58e4f5fa20576a4388e84548bb9fbeec0ba",
+      "route_sha256": "50b2e70e4fd46b3defdc88bd73e6ba9ed2b192b43d39d0524dfd678a6c3a9db8"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/valencia/valencia.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/valencia/rate_18p0/seed_9002.rou.xml",
+      "period_seconds": 0.7079900643506275,
+      "scheduled_records": 1695,
+      "reused": false,
+      "trips_per_lane_km_hour": 18.0,
+      "network_sha256": "817b84ac044209529c54a1e642dcb58e4f5fa20576a4388e84548bb9fbeec0ba",
+      "route_sha256": "da93634398d56df735d844f02d3bcfbf0a21a5723c430a2974504e9f9c3315ca"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/valencia/valencia.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/valencia/rate_12p0/seed_9001.rou.xml",
+      "period_seconds": 1.0619850965259412,
+      "scheduled_records": 1130,
+      "reused": false,
+      "trips_per_lane_km_hour": 12.0,
+      "network_sha256": "817b84ac044209529c54a1e642dcb58e4f5fa20576a4388e84548bb9fbeec0ba",
+      "route_sha256": "489e017ad273ebdf8df73ee349d837e8525fba80c420c56e42c2abbed139fa1e"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/valencia/valencia.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/valencia/rate_12p0/seed_9002.rou.xml",
+      "period_seconds": 1.0619850965259412,
+      "scheduled_records": 1130,
+      "reused": false,
+      "trips_per_lane_km_hour": 12.0,
+      "network_sha256": "817b84ac044209529c54a1e642dcb58e4f5fa20576a4388e84548bb9fbeec0ba",
+      "route_sha256": "26ee56abeb5aa43f8359cfc23187b3e47d64b571e1d8606846c9f7cbc8140a90"
+    },
+    {
+      "seed": 9001,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/valencia/valencia.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/valencia/rate_6p0/seed_9001.rou.xml",
+      "period_seconds": 2.1239701930518824,
+      "scheduled_records": 565,
+      "reused": false,
+      "trips_per_lane_km_hour": 6.0,
+      "network_sha256": "817b84ac044209529c54a1e642dcb58e4f5fa20576a4388e84548bb9fbeec0ba",
+      "route_sha256": "156c76c8690ad11480a95bc8994b6ef1d38d4f2fff98dbda4c439a7568f27ed0"
+    },
+    {
+      "seed": 9002,
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/valencia/valencia.net.xml",
+      "route_file": "/users/sriramv/sumo_traffic_project_ambulance_v5_reviewed/ambulance_validation_demand_v5/valencia/rate_6p0/seed_9002.rou.xml",
+      "period_seconds": 2.1239701930518824,
+      "scheduled_records": 565,
+      "reused": false,
+      "trips_per_lane_km_hour": 6.0,
+      "network_sha256": "817b84ac044209529c54a1e642dcb58e4f5fa20576a4388e84548bb9fbeec0ba",
+      "route_sha256": "7882cdc2a7e19df11a8a8bd9c96e09eee7e06b83c621fc38312805e4c427f1b6"
+    }
+  ]
+}

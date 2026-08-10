@@ -1,0 +1,512 @@
+{
+  "schema_version": 1,
+  "seed": 20260712,
+  "generator": "generate_map_corpus.py",
+  "overpass_turbo_ui": "https://overpass-turbo.eu/",
+  "maps": [
+    {
+      "name": "oakland_1",
+      "split": "train",
+      "bbox": [
+        37.7792531,
+        -122.2989446,
+        37.8118423,
+        -122.2505928
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/oakland_1/oakland_1.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/oakland_1/oakland_1.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/oakland_1/oakland_1.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 358,
+      "sumo_tl_logic_count": 284,
+      "usable_variable_phase_tls_count": 247,
+      "max_stable_phase_candidates": 8
+    },
+    {
+      "name": "oakland_2",
+      "split": "train",
+      "bbox": [
+        37.7907662,
+        -122.2969577,
+        37.8263855,
+        -122.2469785
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/oakland_2/oakland_2.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/oakland_2/oakland_2.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/oakland_2/oakland_2.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 471,
+      "sumo_tl_logic_count": 360,
+      "usable_variable_phase_tls_count": 308,
+      "max_stable_phase_candidates": 8
+    },
+    {
+      "name": "berkeley",
+      "split": "train",
+      "bbox": [
+        37.8507546,
+        -122.2974815,
+        37.8867546,
+        -122.2534815
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/berkeley/berkeley.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/berkeley/berkeley.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/berkeley/berkeley.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 210,
+      "sumo_tl_logic_count": 185,
+      "usable_variable_phase_tls_count": 168,
+      "max_stable_phase_candidates": 6
+    },
+    {
+      "name": "hayward",
+      "split": "train",
+      "bbox": [
+        37.6507388,
+        -122.0920563,
+        37.6867388,
+        -122.0480563
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/hayward/hayward.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/hayward/hayward.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/hayward/hayward.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 133,
+      "sumo_tl_logic_count": 95,
+      "usable_variable_phase_tls_count": 85,
+      "max_stable_phase_candidates": 8
+    },
+    {
+      "name": "san_mateo",
+      "split": "train",
+      "bbox": [
+        37.5437374,
+        -122.3397816,
+        37.5797374,
+        -122.2957816
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/san_mateo/san_mateo.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/san_mateo/san_mateo.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/san_mateo/san_mateo.overpassql",
+      "overpass_endpoint": "https://overpass.kumi.systems/api/interpreter",
+      "osm_traffic_signal_nodes": 117,
+      "sumo_tl_logic_count": 110,
+      "usable_variable_phase_tls_count": 90,
+      "max_stable_phase_candidates": 6
+    },
+    {
+      "name": "palo_alto",
+      "split": "train",
+      "bbox": [
+        37.4216966,
+        -122.1691071,
+        37.4576966,
+        -122.1251071
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/palo_alto/palo_alto.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/palo_alto/palo_alto.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/palo_alto/palo_alto.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 156,
+      "sumo_tl_logic_count": 128,
+      "usable_variable_phase_tls_count": 111,
+      "max_stable_phase_candidates": 8
+    },
+    {
+      "name": "mountain_view",
+      "split": "train",
+      "bbox": [
+        37.3664064,
+        -122.1061782,
+        37.4024064,
+        -122.0621782
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/mountain_view/mountain_view.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/mountain_view/mountain_view.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/mountain_view/mountain_view.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 212,
+      "sumo_tl_logic_count": 144,
+      "usable_variable_phase_tls_count": 105,
+      "max_stable_phase_candidates": 8
+    },
+    {
+      "name": "sunnyvale",
+      "split": "train",
+      "bbox": [
+        37.3584964,
+        -122.0671908,
+        37.3944964,
+        -122.0231908
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sunnyvale/sunnyvale.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sunnyvale/sunnyvale.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sunnyvale/sunnyvale.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 187,
+      "sumo_tl_logic_count": 166,
+      "usable_variable_phase_tls_count": 148,
+      "max_stable_phase_candidates": 10
+    },
+    {
+      "name": "san_jose_1",
+      "split": "train",
+      "bbox": [
+        37.3284703,
+        -121.8995679,
+        37.3619741,
+        -121.8593468
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/san_jose_1/san_jose_1.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/san_jose_1/san_jose_1.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/san_jose_1/san_jose_1.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 314,
+      "sumo_tl_logic_count": 194,
+      "usable_variable_phase_tls_count": 155,
+      "max_stable_phase_candidates": 7
+    },
+    {
+      "name": "san_jose_2",
+      "split": "train",
+      "bbox": [
+        37.3192546,
+        -121.9085661,
+        37.3509039,
+        -121.8620159
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/san_jose_2/san_jose_2.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/san_jose_2/san_jose_2.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/san_jose_2/san_jose_2.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 401,
+      "sumo_tl_logic_count": 255,
+      "usable_variable_phase_tls_count": 206,
+      "max_stable_phase_candidates": 10
+    },
+    {
+      "name": "portland",
+      "split": "train",
+      "bbox": [
+        45.4877686,
+        -122.7059364,
+        45.5237686,
+        -122.6619364
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/portland/portland.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/portland/portland.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/portland/portland.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 420,
+      "sumo_tl_logic_count": 352,
+      "usable_variable_phase_tls_count": 283,
+      "max_stable_phase_candidates": 10
+    },
+    {
+      "name": "phoenix",
+      "split": "train",
+      "bbox": [
+        33.4272508,
+        -112.0973096,
+        33.4672508,
+        -112.0493096
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/phoenix/phoenix.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/phoenix/phoenix.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/phoenix/phoenix.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 219,
+      "sumo_tl_logic_count": 361,
+      "usable_variable_phase_tls_count": 319,
+      "max_stable_phase_candidates": 10
+    },
+    {
+      "name": "denver",
+      "split": "train",
+      "bbox": [
+        39.7268359,
+        -105.0182258,
+        39.7628359,
+        -104.9742258
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/denver/denver.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/denver/denver.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/denver/denver.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 508,
+      "sumo_tl_logic_count": 483,
+      "usable_variable_phase_tls_count": 384,
+      "max_stable_phase_candidates": 11
+    },
+    {
+      "name": "austin",
+      "split": "train",
+      "bbox": [
+        30.2502844,
+        -97.7576737,
+        30.2862844,
+        -97.7136737
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/austin/austin.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/austin/austin.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/austin/austin.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 263,
+      "sumo_tl_logic_count": 292,
+      "usable_variable_phase_tls_count": 262,
+      "max_stable_phase_candidates": 10
+    },
+    {
+      "name": "atlanta",
+      "split": "train",
+      "bbox": [
+        33.7307214,
+        -84.4017699,
+        33.7667214,
+        -84.3577699
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/atlanta/atlanta.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/atlanta/atlanta.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/atlanta/atlanta.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 269,
+      "sumo_tl_logic_count": 278,
+      "usable_variable_phase_tls_count": 238,
+      "max_stable_phase_candidates": 7
+    },
+    {
+      "name": "boston_1",
+      "split": "train",
+      "bbox": [
+        42.3389462,
+        -71.0802352,
+        42.3700026,
+        -71.0412835
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/boston_1/boston_1.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/boston_1/boston_1.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/boston_1/boston_1.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 656,
+      "sumo_tl_logic_count": 348,
+      "usable_variable_phase_tls_count": 253,
+      "max_stable_phase_candidates": 13
+    },
+    {
+      "name": "boston_2",
+      "split": "train",
+      "bbox": [
+        42.3516638,
+        -71.0818441,
+        42.3757634,
+        -71.051391
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/boston_2/boston_2.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/boston_2/boston_2.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/boston_2/boston_2.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 395,
+      "sumo_tl_logic_count": 210,
+      "usable_variable_phase_tls_count": 149,
+      "max_stable_phase_candidates": 13
+    },
+    {
+      "name": "seattle",
+      "split": "train",
+      "bbox": [
+        47.5799403,
+        -122.3526825,
+        47.6137196,
+        -122.3038724
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/seattle/seattle.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/seattle/seattle.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/seattle/seattle.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 320,
+      "sumo_tl_logic_count": 396,
+      "usable_variable_phase_tls_count": 313,
+      "max_stable_phase_candidates": 12
+    },
+    {
+      "name": "chicago",
+      "split": "train",
+      "bbox": [
+        41.8521507,
+        -87.6587262,
+        41.8856853,
+        -87.607786
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/chicago/chicago.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/chicago/chicago.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/chicago/chicago.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 466,
+      "sumo_tl_logic_count": 337,
+      "usable_variable_phase_tls_count": 281,
+      "max_stable_phase_candidates": 7
+    },
+    {
+      "name": "charlotte",
+      "split": "train",
+      "bbox": [
+        35.2016012,
+        -80.8652574,
+        35.2359102,
+        -80.8185969
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/charlotte/charlotte.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/charlotte/charlotte.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/charlotte/charlotte.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 277,
+      "sumo_tl_logic_count": 256,
+      "usable_variable_phase_tls_count": 223,
+      "max_stable_phase_candidates": 11
+    },
+    {
+      "name": "barcelona_1",
+      "split": "train",
+      "bbox": [
+        41.3646763,
+        2.1431386,
+        41.3930282,
+        2.1756948
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/barcelona_1/barcelona_1.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/barcelona_1/barcelona_1.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/barcelona_1/barcelona_1.overpassql",
+      "overpass_endpoint": "https://overpass.kumi.systems/api/interpreter",
+      "osm_traffic_signal_nodes": 804,
+      "sumo_tl_logic_count": 568,
+      "usable_variable_phase_tls_count": 249,
+      "max_stable_phase_candidates": 18
+    },
+    {
+      "name": "barcelona_2",
+      "split": "train",
+      "bbox": [
+        41.3664766,
+        2.1638726,
+        41.3912563,
+        2.1932271
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/barcelona_2/barcelona_2.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/barcelona_2/barcelona_2.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/barcelona_2/barcelona_2.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 422,
+      "sumo_tl_logic_count": 318,
+      "usable_variable_phase_tls_count": 93,
+      "max_stable_phase_candidates": 19
+    },
+    {
+      "name": "paris",
+      "split": "train",
+      "bbox": [
+        48.8475769,
+        2.3296846,
+        48.8808657,
+        2.3627596
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/paris/paris.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/paris/paris.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/paris/paris.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 630,
+      "sumo_tl_logic_count": 526,
+      "usable_variable_phase_tls_count": 285,
+      "max_stable_phase_candidates": 15
+    },
+    {
+      "name": "sacramento",
+      "split": "validation",
+      "bbox": [
+        38.5721206,
+        -121.5073829,
+        38.6081206,
+        -121.4633829
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sacramento/sacramento.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sacramento/sacramento.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/sacramento/sacramento.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 228,
+      "sumo_tl_logic_count": 218,
+      "usable_variable_phase_tls_count": 189,
+      "max_stable_phase_candidates": 4
+    },
+    {
+      "name": "las_vegas",
+      "split": "validation",
+      "bbox": [
+        36.1579623,
+        -115.1542678,
+        36.1939623,
+        -115.1102678
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/las_vegas/las_vegas.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/las_vegas/las_vegas.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/las_vegas/las_vegas.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 456,
+      "sumo_tl_logic_count": 303,
+      "usable_variable_phase_tls_count": 238,
+      "max_stable_phase_candidates": 11
+    },
+    {
+      "name": "salt_lake_city",
+      "split": "validation",
+      "bbox": [
+        40.7417644,
+        -111.9101975,
+        40.7777644,
+        -111.8661975
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/salt_lake_city/salt_lake_city.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/salt_lake_city/salt_lake_city.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/salt_lake_city/salt_lake_city.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 465,
+      "sumo_tl_logic_count": 385,
+      "usable_variable_phase_tls_count": 252,
+      "max_stable_phase_candidates": 10
+    },
+    {
+      "name": "minneapolis",
+      "split": "validation",
+      "bbox": [
+        44.9618942,
+        -93.2990761,
+        44.9997971,
+        -93.2525678
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/minneapolis/minneapolis.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/minneapolis/minneapolis.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/minneapolis/minneapolis.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 353,
+      "sumo_tl_logic_count": 301,
+      "usable_variable_phase_tls_count": 268,
+      "max_stable_phase_candidates": 6
+    },
+    {
+      "name": "valencia",
+      "split": "validation",
+      "bbox": [
+        39.4594526,
+        -0.3931504,
+        39.4854257,
+        -0.3538669
+      ],
+      "osm_file": "/users/sriramv/generated_map_corpus_ambulance_v5/valencia/valencia.osm",
+      "net_file": "/users/sriramv/generated_map_corpus_ambulance_v5/valencia/valencia.net.xml",
+      "query_file": "/users/sriramv/generated_map_corpus_ambulance_v5/valencia/valencia.overpassql",
+      "overpass_endpoint": "https://overpass.kumi.systems/api/interpreter",
+      "osm_traffic_signal_nodes": 326,
+      "sumo_tl_logic_count": 400,
+      "usable_variable_phase_tls_count": 202,
+      "max_stable_phase_candidates": 12
+    }
+  ]
+}

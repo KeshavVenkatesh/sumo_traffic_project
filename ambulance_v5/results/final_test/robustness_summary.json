@@ -1,0 +1,297 @@
+{
+  "matrix_validation_passed": true,
+  "fixed_demand_and_ambulance_schedule_pairing_passed": true,
+  "conditions": 12,
+  "paired_seeds_per_condition": 30,
+  "runs": 1080,
+  "statistics": "paired two-sided 95% Student-t CIs, paired t-tests, paired Cohen's dz, Holm adjustment across condition/metric tests within each controller comparison",
+  "safety": {
+    "traffic_aware_route_native_sumo": {
+      "runs": 360,
+      "ambulance_collisions": 4922,
+      "ambulance_teleports": 2876,
+      "ordinary_collisions": 4909,
+      "ordinary_teleports": 2870,
+      "ambulance_failed": 15,
+      "ambulance_censored": 492,
+      "invalid_policy_actions": 0,
+      "invalid_signal_transitions": 0,
+      "unrecovered_events": 0,
+      "strict_safety_pass": false
+    },
+    "traffic_aware_route_max_pressure": {
+      "runs": 360,
+      "ambulance_collisions": 3694,
+      "ambulance_teleports": 2232,
+      "ordinary_collisions": 3682,
+      "ordinary_teleports": 2231,
+      "ambulance_failed": 13,
+      "ambulance_censored": 438,
+      "invalid_policy_actions": 0,
+      "invalid_signal_transitions": 0,
+      "unrecovered_events": 283,
+      "strict_safety_pass": false
+    },
+    "traffic_aware_route_learned_signals": {
+      "runs": 360,
+      "ambulance_collisions": 3251,
+      "ambulance_teleports": 1927,
+      "ordinary_collisions": 3239,
+      "ordinary_teleports": 1924,
+      "ambulance_failed": 13,
+      "ambulance_censored": 308,
+      "invalid_policy_actions": 0,
+      "invalid_signal_transitions": 0,
+      "unrecovered_events": 92,
+      "strict_safety_pass": false
+    }
+  },
+  "robustness": {
+    "learned_vs_native_sumo": {
+      "ambulance_mean_response_time_s": {
+        "conditions": 12,
+        "clear_positive_conditions": 12,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 11,
+        "worst_condition": {
+          "map": "fremont",
+          "rate": 12.0,
+          "improvement_pct": 12.13615261199461
+        }
+      },
+      "ambulance_p95_response_time_s": {
+        "conditions": 12,
+        "clear_positive_conditions": 12,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 9,
+        "worst_condition": {
+          "map": "fremont",
+          "rate": 12.0,
+          "improvement_pct": 9.387516988908699
+        }
+      },
+      "ambulance_completion_rate": {
+        "conditions": 12,
+        "clear_positive_conditions": 8,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 2,
+        "worst_condition": {
+          "map": "fremont",
+          "rate": 18.0,
+          "improvement_pct": -0.12626262626262078
+        }
+      },
+      "ambulance_mean_time_loss_s": {
+        "conditions": 12,
+        "clear_positive_conditions": 12,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 10,
+        "worst_condition": {
+          "map": "fresno",
+          "rate": 18.0,
+          "improvement_pct": 21.949857780266004
+        }
+      },
+      "ambulance_mean_stopped_seconds": {
+        "conditions": 12,
+        "clear_positive_conditions": 11,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 10,
+        "worst_condition": {
+          "map": "fresno",
+          "rate": 18.0,
+          "improvement_pct": 26.834390152928005
+        }
+      },
+      "ordinary_arrived_total": {
+        "conditions": 12,
+        "clear_positive_conditions": 11,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 10,
+        "worst_condition": {
+          "map": "fremont",
+          "rate": 18.0,
+          "improvement_pct": 3.016675088428513
+        }
+      },
+      "ordinary_scheduled_throughput_rate": {
+        "conditions": 12,
+        "clear_positive_conditions": 11,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 10,
+        "worst_condition": {
+          "map": "fremont",
+          "rate": 18.0,
+          "improvement_pct": 3.016675088428498
+        }
+      },
+      "ordinary_mean_speed_mps": {
+        "conditions": 12,
+        "clear_positive_conditions": 11,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 11,
+        "worst_condition": {
+          "map": "san_diego",
+          "rate": 18.0,
+          "improvement_pct": 6.203709729783544
+        }
+      },
+      "ordinary_mean_queue_vehicles": {
+        "conditions": 12,
+        "clear_positive_conditions": 11,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 11,
+        "worst_condition": {
+          "map": "fresno",
+          "rate": 18.0,
+          "improvement_pct": 8.869757102745405
+        }
+      },
+      "ordinary_mean_wait_all_departed_s": {
+        "conditions": 12,
+        "clear_positive_conditions": 11,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 11,
+        "worst_condition": {
+          "map": "fresno",
+          "rate": 18.0,
+          "improvement_pct": 8.92265220706174
+        }
+      },
+      "ordinary_mean_time_loss_all_departed_s": {
+        "conditions": 12,
+        "clear_positive_conditions": 11,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 11,
+        "worst_condition": {
+          "map": "fresno",
+          "rate": 18.0,
+          "improvement_pct": 5.877717812631593
+        }
+      }
+    },
+    "learned_vs_max_pressure": {
+      "ambulance_mean_response_time_s": {
+        "conditions": 12,
+        "clear_positive_conditions": 12,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 11,
+        "worst_condition": {
+          "map": "santa_clara",
+          "rate": 12.0,
+          "improvement_pct": 8.23560451184309
+        }
+      },
+      "ambulance_p95_response_time_s": {
+        "conditions": 12,
+        "clear_positive_conditions": 11,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 4,
+        "worst_condition": {
+          "map": "santa_clara",
+          "rate": 12.0,
+          "improvement_pct": 0.9751451399522947
+        }
+      },
+      "ambulance_completion_rate": {
+        "conditions": 12,
+        "clear_positive_conditions": 7,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 0,
+        "worst_condition": {
+          "map": "fremont",
+          "rate": 6.0,
+          "improvement_pct": -1.2443438914027172
+        }
+      },
+      "ambulance_mean_time_loss_s": {
+        "conditions": 12,
+        "clear_positive_conditions": 10,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 7,
+        "worst_condition": {
+          "map": "fresno",
+          "rate": 18.0,
+          "improvement_pct": 7.739477258802791
+        }
+      },
+      "ambulance_mean_stopped_seconds": {
+        "conditions": 12,
+        "clear_positive_conditions": 9,
+        "clear_negative_conditions": 0,
+        "holm_clear_positive_conditions": 3,
+        "worst_condition": {
+          "map": "fresno",
+          "rate": 18.0,
+          "improvement_pct": 6.78499299070972
+        }
+      },
+      "ordinary_arrived_total": {
+        "conditions": 12,
+        "clear_positive_conditions": 2,
+        "clear_negative_conditions": 1,
+        "holm_clear_positive_conditions": 0,
+        "worst_condition": {
+          "map": "san_diego",
+          "rate": 6.0,
+          "improvement_pct": -2.0685706105504242
+        }
+      },
+      "ordinary_scheduled_throughput_rate": {
+        "conditions": 12,
+        "clear_positive_conditions": 2,
+        "clear_negative_conditions": 1,
+        "holm_clear_positive_conditions": 0,
+        "worst_condition": {
+          "map": "san_diego",
+          "rate": 6.0,
+          "improvement_pct": -2.068570610550441
+        }
+      },
+      "ordinary_mean_speed_mps": {
+        "conditions": 12,
+        "clear_positive_conditions": 3,
+        "clear_negative_conditions": 1,
+        "holm_clear_positive_conditions": 0,
+        "worst_condition": {
+          "map": "san_diego",
+          "rate": 6.0,
+          "improvement_pct": -4.534037708123307
+        }
+      },
+      "ordinary_mean_queue_vehicles": {
+        "conditions": 12,
+        "clear_positive_conditions": 3,
+        "clear_negative_conditions": 1,
+        "holm_clear_positive_conditions": 0,
+        "worst_condition": {
+          "map": "san_diego",
+          "rate": 6.0,
+          "improvement_pct": -10.331878370566544
+        }
+      },
+      "ordinary_mean_wait_all_departed_s": {
+        "conditions": 12,
+        "clear_positive_conditions": 3,
+        "clear_negative_conditions": 1,
+        "holm_clear_positive_conditions": 0,
+        "worst_condition": {
+          "map": "san_diego",
+          "rate": 6.0,
+          "improvement_pct": -10.363223674514888
+        }
+      },
+      "ordinary_mean_time_loss_all_departed_s": {
+        "conditions": 12,
+        "clear_positive_conditions": 4,
+        "clear_negative_conditions": 1,
+        "holm_clear_positive_conditions": 0,
+        "worst_condition": {
+          "map": "san_diego",
+          "rate": 6.0,
+          "improvement_pct": -3.083408960638312
+        }
+      }
+    }
+  }
+}

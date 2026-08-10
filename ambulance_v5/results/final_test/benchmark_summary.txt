@@ -1,0 +1,34 @@
+AMBULANCE-V5 FINAL NATIVE SUMO / MAXPRESSURE BENCHMARK
+Matrix: 4 maps x 3 rates x 30 paired seeds x 3 controllers = 1080 runs
+Pairing: PASS (background route, network, and deterministic ambulance schedule hashes match)
+
+learned_vs_native_sumo
+  ambulance_mean_response_time_s: +21.52%; 95% paired delta CI [63.51, 77.6]; p=7.992e-59; dz=1.035
+  ambulance_p95_response_time_s: +22.37%; 95% paired delta CI [86.19, 112.4]; p=2.872e-39; dz=0.7832
+  ambulance_completion_rate: +12.22%; 95% paired delta CI [0.07115, 0.1125]; p=1.118e-16; dz=0.4591
+  ambulance_mean_time_loss_s: +34.82%; 95% paired delta CI [74.5, 94.43]; p=2.17e-46; dz=0.8757
+  ambulance_mean_stopped_seconds: +45.65%; 95% paired delta CI [74.47, 95.63]; p=6.938e-43; dz=0.8304
+  ordinary_arrived_total: +11.57%; 95% paired delta CI [77.27, 99.37]; p=1.64e-42; dz=0.8256
+  ordinary_scheduled_throughput_rate: +9.87%; 95% paired delta CI [0.04845, 0.05937]; p=1.136e-57; dz=1.02
+  ordinary_mean_speed_mps: +12.93%; 95% paired delta CI [0.7925, 0.9848]; p=1.499e-52; dz=0.9547
+  ordinary_mean_queue_vehicles: +20.54%; 95% paired delta CI [47.81, 59.48]; p=3.55e-52; dz=0.9499
+  ordinary_mean_wait_all_departed_s: +23.63%; 95% paired delta CI [34.17, 40.06]; p=2.058e-79; dz=1.302
+  ordinary_mean_time_loss_all_departed_s: +16.82%; 95% paired delta CI [31.77, 37.12]; p=1.109e-81; dz=1.332
+
+learned_vs_max_pressure
+  ambulance_mean_response_time_s: +14.31%; 95% paired delta CI [37.9, 48.06]; p=2.896e-46; dz=0.8741
+  ambulance_p95_response_time_s: +13.75%; 95% paired delta CI [44.76, 65.14]; p=6.671e-23; dz=0.5569
+  ambulance_completion_rate: +8.30%; 95% paired delta CI [0.04549, 0.08377]; p=1.337e-10; dz=0.3487
+  ambulance_mean_time_loss_s: +26.70%; 95% paired delta CI [48.25, 66.9]; p=1.655e-28; dz=0.6378
+  ambulance_mean_stopped_seconds: +33.99%; 95% paired delta CI [42.31, 61.98]; p=2.726e-22; dz=0.5477
+  ordinary_arrived_total: +0.55%; 95% paired delta CI [-2.888, 12.15]; p=0.228; dz=0.06364
+  ordinary_scheduled_throughput_rate: +0.31%; 95% paired delta CI [-0.002954, 0.006661]; p=0.4503; dz=0.03983
+  ordinary_mean_speed_mps: +0.72%; 95% paired delta CI [-0.03315, 0.1448]; p=0.2196; dz=0.06481
+  ordinary_mean_queue_vehicles: +1.16%; 95% paired delta CI [-1.386, 6.244]; p=0.2129; dz=0.06576
+  ordinary_mean_wait_all_departed_s: +0.45%; 95% paired delta CI [-1.981, 3.068]; p=0.6732; dz=0.02225
+  ordinary_mean_time_loss_all_departed_s: +0.90%; 95% paired delta CI [-0.7498, 3.851]; p=0.1873; dz=0.06963
+
+strict safety by controller
+  traffic_aware_route_native_sumo: FAIL; failed=15, censored=492, collisions=9831, teleports=5746, invalid_actions=0, invalid_transitions=0, unrecovered=0
+  traffic_aware_route_max_pressure: FAIL; failed=13, censored=438, collisions=7376, teleports=4463, invalid_actions=0, invalid_transitions=0, unrecovered=283
+  traffic_aware_route_learned_signals: FAIL; failed=13, censored=308, collisions=6490, teleports=3851, invalid_actions=0, invalid_transitions=0, unrecovered=92

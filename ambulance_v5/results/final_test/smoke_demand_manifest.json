@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "generator": "exact_copy_of_sumo_eval_v3_full_20260730_plus_audited_v5_vtype",
+  "episode_seconds": 1200.0,
+  "rates": [
+    12.0
+  ],
+  "seeds": [
+    1001
+  ],
+  "routes": [
+    {
+      "map_id": "fresno",
+      "seed": 1001,
+      "net_file": "/users/sriramv/sumo_eval_v3_inputs_20260730/generated_test_maps/fresno/fresno.net.xml",
+      "route_file": "/users/sriramv/ambulance_v5_native_mp_full_20260807/demand/fresno/rate_12p0/seed_1001.rou.xml",
+      "period_seconds": 0.6072716775392246,
+      "trips_per_lane_km_hour": 12.0,
+      "scenario": "12",
+      "scheduled_records": 1977,
+      "network_sha256": "22e5f64e810549c0beae5e58f16e48748680bea87ac844c099da33eaaa5e7ba3",
+      "route_sha256": "764080c662babc7ce490f3495cb0d939389ae42643297fcf3c462636cdc165ed"
+    }
+  ]
+}
