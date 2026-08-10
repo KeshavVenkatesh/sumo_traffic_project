@@ -1,0 +1,210 @@
+{
+  "applied_at_utc": "2026-08-03T01:12:01.398088+00:00",
+  "migration": {
+    "base_checkpoint_modified": false,
+    "frozen_weights_changed": false,
+    "learned_parameter_shapes_changed": false,
+    "method": "shared_phase_scorer_state_dict"
+  },
+  "offending_tls": "joinedS_11560053031_1311770050_1375310919_26057312_#11more",
+  "phase_capacity": {
+    "runtime": 32,
+    "source_base_checkpoint": 16
+  },
+  "reason": "A production training TLS exposed 18 native stable-green candidates while the original padding capacity was 16.",
+  "schema_version": 1,
+  "source_hashes": {
+    "base_checkpoint_sha256": "be832797883d589441fd27d52b87884320a624af024eab0dac4ed8d9860f0706",
+    "original_map_agnostic_tls_sha256": "9b29d8f4da76c98e5ccf82468c7d28556dde9fb0bfad8e32bb38c7136c172a90",
+    "original_trainer_sha256": "f5cd910ff6fe116da37782a77e313eacaba4117df7c13ee4ab915523ace32e2e",
+    "patched_map_agnostic_tls_sha256": "1075c464fc930b94f2c2a3a21c85f69011f4ebca89a8c9f88202fdd312ed63e6",
+    "patched_trainer_sha256": "71edaceb25dbe4f7f6ff852dd51840eb96d9a4b415ab6cfd1bedbce1f7ece8ac",
+    "worker_sha256": "d5a2ffed7d4b4d2764518ac2516a9982c21f90b86e7427275bf584c73c0ddc26"
+  },
+  "topology_scan": {
+    "maps_scanned": 24,
+    "maximum_stable_green_candidates": 19,
+    "scanned_splits": [
+      "train",
+      "validation"
+    ],
+    "test_maps_inspected": false,
+    "top_records": [
+      {
+        "map": "barcelona_2",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 19,
+        "tls_id": "joinedS_11560053031_1311770050_1375310919_26057312_#11more"
+      },
+      {
+        "map": "barcelona_1",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 18,
+        "tls_id": "joinedS_11560053031_1311770050_1375310919_26057312_#11more"
+      },
+      {
+        "map": "barcelona_1",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 15,
+        "tls_id": "joinedS_11466476299_11560053036_1400448338_2521199755_#7more"
+      },
+      {
+        "map": "barcelona_2",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 15,
+        "tls_id": "joinedS_11466476299_11560053036_1400448338_2521199755_#7more"
+      },
+      {
+        "map": "barcelona_1",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 14,
+        "tls_id": "joinedS_12884134293_12884134297_1382873721_1469158197_#10more"
+      },
+      {
+        "map": "boston_1",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 13,
+        "tls_id": "joinedS_1102757229_61437920_61590727_61602441_#5more"
+      },
+      {
+        "map": "boston_1",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 13,
+        "tls_id": "joinedS_11372560670_11404892318_12187402012_61367808_#5more"
+      },
+      {
+        "map": "boston_2",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 13,
+        "tls_id": "joinedS_1102757229_61437920_61590727_61602441_#5more"
+      },
+      {
+        "map": "boston_2",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 13,
+        "tls_id": "joinedS_11372560670_11404892318_12187402012_61367808_#5more"
+      },
+      {
+        "map": "valencia",
+        "program_id": "0",
+        "split": "validation",
+        "stable_green_candidates": 12,
+        "tls_id": "joinedS_10944111411_111895152_128249164_128249166_#6more"
+      },
+      {
+        "map": "valencia",
+        "program_id": "0",
+        "split": "validation",
+        "stable_green_candidates": 12,
+        "tls_id": "joinedS_110317219_131943274_1870400745_1870400749_#7more"
+      },
+      {
+        "map": "valencia",
+        "program_id": "0",
+        "split": "validation",
+        "stable_green_candidates": 12,
+        "tls_id": "joinedS_12438847768_297664578_5426207165_6844144033_#10more"
+      },
+      {
+        "map": "denver",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 11,
+        "tls_id": "joinedS_3342986188_4268951437_6534357728_cluster_176072959_176072960_176081485_3282067163_#5more"
+      },
+      {
+        "map": "las_vegas",
+        "program_id": "0",
+        "split": "validation",
+        "stable_green_candidates": 11,
+        "tls_id": "joinedS_5500658769_cluster_13042521891_13156652482_13156652483_13156652484_#11more_cluster_4835808981_4835808985_5520634330_5520634331"
+      },
+      {
+        "map": "austin",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 10,
+        "tls_id": "joinedS_12202354546_152393528_7484263030"
+      },
+      {
+        "map": "barcelona_1",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 10,
+        "tls_id": "joinedS_11309929338_12896055757_1534557559_2903054208_#10more"
+      },
+      {
+        "map": "barcelona_1",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 10,
+        "tls_id": "joinedS_12884439736_1378894231_1589583591_1840720995_#9more"
+      },
+      {
+        "map": "boston_1",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 10,
+        "tls_id": "joinedS_11137392874_2003929486_61428068_7732861469_#4more"
+      },
+      {
+        "map": "denver",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 10,
+        "tls_id": "joinedS_3098457012_5506943666_cluster_176072968_3238902322_cluster_176072970_2828196660_3282129430_3282130218_#3more"
+      },
+      {
+        "map": "las_vegas",
+        "program_id": "0",
+        "split": "validation",
+        "stable_green_candidates": 10,
+        "tls_id": "joinedS_13179593799_13179593800_13179614801_13179614804_#11more"
+      },
+      {
+        "map": "phoenix",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 10,
+        "tls_id": "joinedS_11189682413_11189682417_12134332183_3608483507_#2more"
+      },
+      {
+        "map": "phoenix",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 10,
+        "tls_id": "joinedS_11907040117_12222695531_2227528320_2227528321_#3more"
+      },
+      {
+        "map": "portland",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 10,
+        "tls_id": "joinedS_12944106721_cluster_1377247767_13946172858_3674362060_cluster_1377247768_1377247769_1385362503_13946172857_#4more_cluster_1385376742_13946172860_13946172861_13946172862_#2more_#1more"
+      },
+      {
+        "map": "salt_lake_city",
+        "program_id": "0",
+        "split": "validation",
+        "stable_green_candidates": 10,
+        "tls_id": "joinedS_11232272636_11232279237_11232279238_11232279240_#14more"
+      },
+      {
+        "map": "san_jose_2",
+        "program_id": "0",
+        "split": "train",
+        "stable_green_candidates": 10,
+        "tls_id": "joinedS_13323687042_13323687045_65468873_cluster_12335479644_7312034188"
+      }
+    ]
+  }
+}

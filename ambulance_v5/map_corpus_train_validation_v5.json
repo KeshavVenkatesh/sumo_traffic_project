@@ -1,0 +1,422 @@
+{
+  "regions": [
+    {
+      "name": "oakland",
+      "center": [
+        37.8044,
+        -122.2712
+      ],
+      "jitter": [
+        0.012,
+        0.015
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "half_size_jitter": 0.2,
+      "subareas": 2,
+      "split": "train"
+    },
+    {
+      "name": "berkeley",
+      "center": [
+        37.8715,
+        -122.273
+      ],
+      "jitter": [
+        0.008,
+        0.012
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "hayward",
+      "center": [
+        37.6688,
+        -122.0808
+      ],
+      "jitter": [
+        0.012,
+        0.015
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "san_mateo",
+      "center": [
+        37.563,
+        -122.3255
+      ],
+      "jitter": [
+        0.01,
+        0.012
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "palo_alto",
+      "center": [
+        37.4419,
+        -122.143
+      ],
+      "jitter": [
+        0.01,
+        0.012
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "mountain_view",
+      "center": [
+        37.3861,
+        -122.0839
+      ],
+      "jitter": [
+        0.01,
+        0.012
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "sunnyvale",
+      "center": [
+        37.3688,
+        -122.0363
+      ],
+      "jitter": [
+        0.01,
+        0.012
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "san_jose",
+      "center": [
+        37.3382,
+        -121.8863
+      ],
+      "jitter": [
+        0.016,
+        0.02
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "half_size_jitter": 0.2,
+      "subareas": 2,
+      "split": "train"
+    },
+    {
+      "name": "portland",
+      "center": [
+        45.5152,
+        -122.6784
+      ],
+      "jitter": [
+        0.012,
+        0.016
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "phoenix",
+      "center": [
+        33.4484,
+        -112.074
+      ],
+      "jitter": [
+        0.014,
+        0.018
+      ],
+      "half_size": [
+        0.02,
+        0.024
+      ],
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "denver",
+      "center": [
+        39.7392,
+        -104.9903
+      ],
+      "jitter": [
+        0.012,
+        0.016
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "austin",
+      "center": [
+        30.2672,
+        -97.7431
+      ],
+      "jitter": [
+        0.012,
+        0.016
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "atlanta",
+      "center": [
+        33.749,
+        -84.388
+      ],
+      "jitter": [
+        0.012,
+        0.016
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "boston",
+      "center": [
+        42.3601,
+        -71.0589
+      ],
+      "jitter": [
+        0.01,
+        0.014
+      ],
+      "half_size": [
+        0.016,
+        0.02
+      ],
+      "half_size_jitter": 0.25,
+      "subareas": 2,
+      "split": "train"
+    },
+    {
+      "name": "seattle",
+      "center": [
+        47.6062,
+        -122.3321
+      ],
+      "jitter": [
+        0.012,
+        0.015
+      ],
+      "half_size": [
+        0.018,
+        0.021
+      ],
+      "half_size_jitter": 0.2,
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "chicago",
+      "center": [
+        41.8781,
+        -87.6298
+      ],
+      "jitter": [
+        0.014,
+        0.018
+      ],
+      "half_size": [
+        0.019,
+        0.023
+      ],
+      "half_size_jitter": 0.2,
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "charlotte",
+      "center": [
+        35.2271,
+        -80.8431
+      ],
+      "jitter": [
+        0.012,
+        0.016
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "half_size_jitter": 0.25,
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "barcelona",
+      "center": [
+        41.3874,
+        2.1686
+      ],
+      "jitter": [
+        0.01,
+        0.014
+      ],
+      "half_size": [
+        0.014,
+        0.018
+      ],
+      "half_size_jitter": 0.2,
+      "subareas": 2,
+      "split": "train"
+    },
+    {
+      "name": "paris",
+      "center": [
+        48.8566,
+        2.3522
+      ],
+      "jitter": [
+        0.01,
+        0.014
+      ],
+      "half_size": [
+        0.014,
+        0.018
+      ],
+      "half_size_jitter": 0.2,
+      "subareas": 1,
+      "split": "train"
+    },
+    {
+      "name": "sacramento",
+      "center": [
+        38.5816,
+        -121.4944
+      ],
+      "jitter": [
+        0.012,
+        0.015
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "validation"
+    },
+    {
+      "name": "las_vegas",
+      "center": [
+        36.1699,
+        -115.1398
+      ],
+      "jitter": [
+        0.012,
+        0.016
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "validation"
+    },
+    {
+      "name": "salt_lake_city",
+      "center": [
+        40.7608,
+        -111.891
+      ],
+      "jitter": [
+        0.012,
+        0.016
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "subareas": 1,
+      "split": "validation"
+    },
+    {
+      "name": "minneapolis",
+      "center": [
+        44.9778,
+        -93.265
+      ],
+      "jitter": [
+        0.012,
+        0.016
+      ],
+      "half_size": [
+        0.018,
+        0.022
+      ],
+      "half_size_jitter": 0.2,
+      "subareas": 1,
+      "split": "validation"
+    },
+    {
+      "name": "valencia",
+      "center": [
+        39.4699,
+        -0.3763
+      ],
+      "jitter": [
+        0.01,
+        0.014
+      ],
+      "half_size": [
+        0.014,
+        0.018
+      ],
+      "half_size_jitter": 0.2,
+      "subareas": 1,
+      "split": "validation"
+    }
+  ]
+}

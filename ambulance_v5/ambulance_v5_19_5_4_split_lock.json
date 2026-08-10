@@ -1,0 +1,117 @@
+{
+  "final_test_protocol": {
+    "checkpoint": "models/map_agnostic_emergency_v5_19train_production_best",
+    "decision_seconds": 5,
+    "episode_seconds": 1200,
+    "maps": [
+      "charlotte",
+      "chicago",
+      "paris",
+      "seattle"
+    ],
+    "rates": [
+      6.0,
+      12.0,
+      18.0
+    ],
+    "rule": "Generate this fresh demand bank and evaluate once after training; do not tune on these results.",
+    "seeds": [
+      12001,
+      12002,
+      12003,
+      12004,
+      12005,
+      12006,
+      12007,
+      12008,
+      12009,
+      12010,
+      12011,
+      12012,
+      12013,
+      12014,
+      12015,
+      12016,
+      12017,
+      12018,
+      12019,
+      12020,
+      12021,
+      12022,
+      12023,
+      12024,
+      12025,
+      12026,
+      12027,
+      12028,
+      12029,
+      12030
+    ]
+  },
+  "production_hashes": {
+    "map_manifest_sha256": "d1289176f13f3457431ae5c365ace8dbc0aee7049e3aead728fc7b1b0de2d795",
+    "reserved_test_manifest_sha256": "a78cb1449b49a98b3fdd20b456e7263e52ae4f741bec6a3dc577ebb0325953ca",
+    "training_demand_manifest_sha256": "fa67a3718e435d60790afe455eac525f8e765c84c01fa41e7ce8ef47c9572e59"
+  },
+  "route_counts": {
+    "reserved_existing_test": 72,
+    "train": 342,
+    "validation": 30
+  },
+  "schema_version": 1,
+  "source_hashes": {
+    "base_checkpoint_sha256": "be832797883d589441fd27d52b87884320a624af024eab0dac4ed8d9860f0706",
+    "source_map_manifest_sha256": "f2981ac20a37e0c1ab84d133ddbe592bf39a3506280125f6ce525587ecc770d5",
+    "source_training_demand_manifest_sha256": "4650c7398f3ac4e04a3da4b49a0a9b4df035b9198c030a428a1447ba73f3c41b",
+    "trainer_sha256": "f5cd910ff6fe116da37782a77e313eacaba4117df7c13ee4ab915523ace32e2e",
+    "validation_demand_manifest_sha256": "d0b0780872d647de8436a126584cbdbfd7adbe32b24d862de392e3e0e7c45f2b",
+    "worker_sha256": "d5a2ffed7d4b4d2764518ac2516a9982c21f90b86e7427275bf584c73c0ddc26"
+  },
+  "splits": {
+    "test": [
+      "charlotte",
+      "chicago",
+      "paris",
+      "seattle"
+    ],
+    "train": [
+      "atlanta",
+      "austin",
+      "barcelona_1",
+      "barcelona_2",
+      "berkeley",
+      "boston_1",
+      "boston_2",
+      "denver",
+      "hayward",
+      "mountain_view",
+      "oakland_1",
+      "oakland_2",
+      "palo_alto",
+      "phoenix",
+      "portland",
+      "san_jose_1",
+      "san_jose_2",
+      "san_mateo",
+      "sunnyvale"
+    ],
+    "validation": [
+      "las_vegas",
+      "minneapolis",
+      "sacramento",
+      "salt_lake_city",
+      "valencia"
+    ]
+  },
+  "training_plan": {
+    "decision_seconds": 5,
+    "episode_seconds": 3600,
+    "map_rollouts": 1520,
+    "planned_ppo_updates": 240,
+    "rollout_decisions": 389120,
+    "rollout_steps": 256,
+    "rollouts_per_map_visit": 2,
+    "rounds": 40,
+    "workers": 8
+  }
+}

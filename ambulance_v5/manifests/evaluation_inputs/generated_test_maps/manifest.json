@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "seed": 20260712,
+  "generator": "generate_map_corpus.py",
+  "overpass_turbo_ui": "https://overpass-turbo.eu/",
+  "maps": [
+    {
+      "name": "fresno",
+      "split": "test",
+      "bbox": [
+        36.7184509,
+        -119.7946272,
+        36.7544509,
+        -119.7506272
+      ],
+      "osm_file": "/users/sriramv/sumo_eval_v3_inputs_20260730/generated_test_maps/fresno/fresno.osm",
+      "net_file": "/users/sriramv/sumo_eval_v3_inputs_20260730/generated_test_maps/fresno/fresno.net.xml",
+      "query_file": "/users/sriramv/sumo_eval_v3_inputs_20260730/generated_test_maps/fresno/fresno.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 147,
+      "sumo_tl_logic_count": 115,
+      "usable_variable_phase_tls_count": 92,
+      "max_stable_phase_candidates": 13
+    },
+    {
+      "name": "san_diego",
+      "split": "test",
+      "bbox": [
+        32.7017617,
+        -117.1984823,
+        32.7377617,
+        -117.1544823
+      ],
+      "osm_file": "/users/sriramv/sumo_eval_v3_inputs_20260730/generated_test_maps/san_diego/san_diego.osm",
+      "net_file": "/users/sriramv/sumo_eval_v3_inputs_20260730/generated_test_maps/san_diego/san_diego.net.xml",
+      "query_file": "/users/sriramv/sumo_eval_v3_inputs_20260730/generated_test_maps/san_diego/san_diego.overpassql",
+      "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+      "osm_traffic_signal_nodes": 384,
+      "sumo_tl_logic_count": 245,
+      "usable_variable_phase_tls_count": 208,
+      "max_stable_phase_candidates": 7
+    }
+  ]
+}

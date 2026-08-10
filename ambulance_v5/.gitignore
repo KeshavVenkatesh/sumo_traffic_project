@@ -1,0 +1,15 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+
+models/*.pt
+models/*.zip
+
+release_assets/
+generated_map_corpus/
+ambulance_training_demand_v5/
+ambulance_validation_demand_v5/
+runs/
+backups/
+ambulance_v5_native_mp_full_20260807/
+sumo_eval_v3_inputs_20260730/

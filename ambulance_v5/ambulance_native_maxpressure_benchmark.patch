@@ -1,0 +1,448 @@
+--- a/evaluate_ambulance_system.py
++++ b/evaluate_ambulance_system.py
+@@ -73,6 +73,28 @@
+ PRIMARY_LEARNED = "traffic_aware_route_learned_signals"
+ COMBINED_BASELINE = "free_flow_route_base_signals"
+
++# Final three-way benchmark.  This is deliberately opt-in so the checkpoint
++# selector keeps using the original five ablations above.  All three arms use
++# the identical traffic-aware ambulance router, fixed background demand, and
++# deterministic ambulance schedule; only signal control differs.
++BASELINE_BENCHMARK_ABLATIONS = (
++    {
++        "name": "traffic_aware_route_native_sumo",
++        "routing_mode": "traffic_aware",
++        "controller_mode": "native_sumo",
++    },
++    {
++        "name": "traffic_aware_route_max_pressure",
++        "routing_mode": "traffic_aware",
++        "controller_mode": "max_pressure",
++    },
++    ABLATION_BY_NAME[PRIMARY_LEARNED],
++)
++ALL_ABLATION_BY_NAME = {
++    **ABLATION_BY_NAME,
++    **{item["name"]: item for item in BASELINE_BENCHMARK_ABLATIONS},
++}
++
+
+ @dataclass(frozen=True)
+ class DemandRecord:
+@@ -101,7 +123,7 @@
+
+     @property
+     def ablation(self) -> Mapping[str, str]:
+-        return ABLATION_BY_NAME[self.ablation_name]
++        return ALL_ABLATION_BY_NAME[self.ablation_name]
+
+
+ def _resolve_manifest_path(raw: str, manifest_dir: Path) -> Path:
+@@ -419,6 +441,12 @@
+             DEFAULT_REQUIRED_EXIT_GAP_METERS
+         ),
+         "allow_unsafe_hard_max_fallback": False,
++        # Native SUMO must never pass through the custom TLS action executor.
++        # The worker still builds read-only phase metadata for ambulance route
++        # indexing, but SUMO advances the original <tlLogic> by itself.
++        "native_sumo_signals": (
++            ablation["controller_mode"] == "native_sumo"
++        ),
+         "sumo_error_log": str(
+             args.sumo_log_dir
+             / f"eval_task_{int(task.index):06d}.log"
+@@ -623,13 +651,16 @@
+         _close_workers(workers)
+
+
+-def verify_pairing(records: Sequence[Mapping[str, Any]]) -> None:
++def verify_pairing(
++    records: Sequence[Mapping[str, Any]],
++    expected_names: set[str] | None = None,
++) -> None:
+     by_scenario: dict[str, list[Mapping[str, Any]]] = {}
+     for record in records:
+         by_scenario.setdefault(
+             str(record["scenario_key"]), []
+         ).append(record)
+-    expected = set(ABLATION_BY_NAME)
++    expected = set(ABLATION_BY_NAME) if expected_names is None else set(expected_names)
+     for scenario_key, group in by_scenario.items():
+         names = {str(record["ablation"]) for record in group}
+         if names != expected or len(group) != len(expected):
+@@ -1163,6 +1194,101 @@
+     }
+
+
++def build_baseline_benchmark_summary(
++    records: Sequence[Mapping[str, Any]],
++) -> dict[str, Any]:
++    """Summarize learned-vs-Native and learned-vs-MaxPressure signal control."""
++
++    names = [item["name"] for item in BASELINE_BENCHMARK_ABLATIONS]
++    aggregates = {
++        name: aggregate_ablation(
++            [record for record in records if record["ablation"] == name]
++        )
++        for name in names
++    }
++    learned = aggregates[PRIMARY_LEARNED]
++
++    def comparison(baseline_name: str) -> dict[str, float]:
++        baseline = aggregates[baseline_name]
++        return {
++            "ambulance_response_time_improvement_percent": _relative_change(
++                learned["ambulance_mean_response_time_s"],
++                baseline["ambulance_mean_response_time_s"],
++                lower_is_better=True,
++            ),
++            "ambulance_p95_response_time_improvement_percent": _relative_change(
++                learned["ambulance_p95_response_time_s"],
++                baseline["ambulance_p95_response_time_s"],
++                lower_is_better=True,
++            ),
++            "ordinary_delay_improvement_percent": _relative_change(
++                learned["ordinary_mean_time_loss_all_departed_s"],
++                baseline["ordinary_mean_time_loss_all_departed_s"],
++                lower_is_better=True,
++            ),
++            "ordinary_throughput_improvement_percent": _relative_change(
++                learned["ordinary_throughput_rate"],
++                baseline["ordinary_throughput_rate"],
++                lower_is_better=False,
++            ),
++            "ordinary_queue_improvement_percent": _relative_change(
++                learned["ordinary_mean_queue_vehicles"],
++                baseline["ordinary_mean_queue_vehicles"],
++                lower_is_better=True,
++            ),
++            "ordinary_speed_improvement_percent": _relative_change(
++                learned["ordinary_mean_speed_mps"],
++                baseline["ordinary_mean_speed_mps"],
++                lower_is_better=False,
++            ),
++        }
++
++    by_scenario: dict[str, dict[str, Mapping[str, Any]]] = {}
++    for record in records:
++        by_scenario.setdefault(str(record["scenario_key"]), {})[
++            str(record["ablation"])
++        ] = record
++    paired = []
++    for scenario_key, group in sorted(by_scenario.items()):
++        learned_record = group[PRIMARY_LEARNED]
++        item: dict[str, Any] = {
++            "scenario_key": scenario_key,
++            "map_id": learned_record["map_id"],
++            "scenario": learned_record["scenario"],
++            "seed": learned_record["seed"],
++            "schedule_sha256": learned_record["schedule_sha256"],
++            "route_sha256": learned_record["route_sha256"],
++        }
++        for label, baseline_name in (
++            ("native_sumo", "traffic_aware_route_native_sumo"),
++            ("max_pressure", "traffic_aware_route_max_pressure"),
++        ):
++            baseline_record = group[baseline_name]
++            item[f"learned_vs_{label}_ambulance_gain_percent"] = _relative_change(
++                _run_response_time(learned_record["ambulance"]),
++                _run_response_time(baseline_record["ambulance"]),
++                lower_is_better=True,
++            )
++            item[f"learned_vs_{label}_ordinary_delay_gain_percent"] = _relative_change(
++                _ordinary_delay(learned_record["ordinary_traffic"]),
++                _ordinary_delay(baseline_record["ordinary_traffic"]),
++                lower_is_better=True,
++            )
++        paired.append(item)
++
++    return {
++        "controllers": names,
++        "aggregates": aggregates,
++        "learned_vs_native_sumo": comparison(
++            "traffic_aware_route_native_sumo"
++        ),
++        "learned_vs_max_pressure": comparison(
++            "traffic_aware_route_max_pressure"
++        ),
++        "paired_scenarios": paired,
++    }
++
++
+ def parse_args() -> argparse.Namespace:
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--manifest", default="")
+@@ -1268,6 +1394,14 @@
+     parser.add_argument(
+         "--serve-eta-seconds", type=float, default=12.0
+     )
++    parser.add_argument(
++        "--native-maxpressure-benchmark-only",
++        action="store_true",
++        help=(
++            "Run exactly three paired traffic-aware arms: native SUMO, "
++            "normalized MaxPressure, and the learned ambulance controller."
++        ),
++    )
+     args = parser.parse_args()
+     args.splits = set(parse_csv(args.splits))
+     if not args.manifest and not args.maps:
+@@ -1370,6 +1504,11 @@
+     authority = float(
+         checkpoint.get("authority", contract.authority)
+     )
++    selected_ablations = (
++        BASELINE_BENCHMARK_ABLATIONS
++        if args.native_maxpressure_benchmark_only
++        else ABLATIONS
++    )
+     tasks = [
+         EvaluationTask(
+             index=index,
+@@ -1379,14 +1518,14 @@
+         for index, (demand, ablation) in enumerate(
+             (demand, ablation)
+             for demand in demand_records
+-            for ablation in ABLATIONS
++            for ablation in selected_ablations
+         )
+     ]
+     print("\nAmbulance evaluation plan")
+     print(f"  maps:              {len(maps)}")
+     print(f"  demand scenarios:  {len(demand_records)}")
+     print(f"  paired runs:       {len(tasks)}")
+-    print(f"  ablations:         {len(ABLATIONS)}")
++    print(f"  ablations:         {len(selected_ablations)}")
+     print(f"  workers:           {args.workers}")
+     print(f"  authority:         {authority:g}")
+
+@@ -1422,13 +1561,21 @@
+             demand.route_sha256,
+             "Route",
+         )
+-    verify_pairing(records)
+-    summary = build_summary(records, args)
++    selected_names = {str(item["name"]) for item in selected_ablations}
++    verify_pairing(records, expected_names=selected_names)
++    if args.native_maxpressure_benchmark_only:
++        summary = {
++            "baseline_benchmark": build_baseline_benchmark_summary(records)
++        }
++        evaluation_mode = (
++            "paired_immutable_demand_native_maxpressure_learned_exact_sumo"
++        )
++    else:
++        summary = build_summary(records, args)
++        evaluation_mode = "paired_immutable_demand_five_way_exact_sumo"
+     payload = {
+         "schema_version": AMBULANCE_SCHEMA_VERSION,
+-        "evaluation_mode": (
+-            "paired_immutable_demand_five_way_exact_sumo"
+-        ),
++        "evaluation_mode": evaluation_mode,
+         "base_model": str(base_checkpoint.resolve()),
+         "base_model_sha256": contract.base_checkpoint_sha256,
+         "emergency_model": str(
+@@ -1455,20 +1602,23 @@
+         encoding="utf-8",
+     )
+     temporary.replace(args.output_json)
+-    compact = {
+-        key: payload[key]
+-        for key in (
+-            "eligible",
+-            "selection_score",
+-            "ambulance_gain_percent",
+-            "combined_routing_and_signal_gain_percent",
+-            "routing_only_gain_percent",
+-            "learned_vs_deterministic_gain_percent",
+-            "ordinary_delay_change_percent",
+-            "throughput_change_percent",
+-            "gates",
+-        )
+-    }
++    if args.native_maxpressure_benchmark_only:
++        compact = payload["baseline_benchmark"]
++    else:
++        compact = {
++            key: payload[key]
++            for key in (
++                "eligible",
++                "selection_score",
++                "ambulance_gain_percent",
++                "combined_routing_and_signal_gain_percent",
++                "routing_only_gain_percent",
++                "learned_vs_deterministic_gain_percent",
++                "ordinary_delay_change_percent",
++                "throughput_change_percent",
++                "gates",
++            )
++        }
+     print(
+         VALIDATION_MARKER
+         + json.dumps(compact, separators=(",", ":"), allow_nan=False)
+--- a/ambulance_multiagent_worker.py
++++ b/ambulance_multiagent_worker.py
+@@ -693,6 +693,8 @@
+         "learned",
+         "base",
+         "deterministic_preemption",
++        "max_pressure",
++        "native_sumo",
+     }:
+         raise ValueError(f"Unknown controller_mode={controller_mode!r}")
+     device = torch.device("cpu")
+@@ -736,6 +738,10 @@
+             episode.observations,
+             policy["effective_masks"],
+         )
++        standalone_max_pressure = normalized_max_pressure_actions(
++            episode.observations,
++            masks,
++        )
+         teacher_actions = np.asarray(
+             [
+                 episode.corridor.teacher_action(
+@@ -761,6 +767,17 @@
+             actions = policy["base_actions"]
+         elif controller_mode == "deterministic_preemption":
+             actions = teacher_actions
++        elif controller_mode == "max_pressure":
++            # This is the same normalized MaxPressure/starvation heuristic used
++            # by compare_native_sumo_vs_max_pressure.py in the schema-v3 final
++            # campaign.  It is intentionally ambulance-unaware.  Use the full
++            # ordinary action mask here, not the emergency residual mask (which
++            # collapses to the frozen-base action outside an ambulance corridor).
++            actions = standalone_max_pressure
++        elif controller_mode == "native_sumo":
++            # PersistentAllTLSEpisode.step() ignores actions in native mode and
++            # leaves the .net.xml <tlLogic> under SUMO's control.
++            actions = policy["base_actions"]
+         else:
+             actions = policy["actions"]
+
+@@ -859,6 +876,8 @@
+         "learned",
+         "base",
+         "deterministic_preemption",
++        "max_pressure",
++        "native_sumo",
+     }:
+         raise ValueError(f"Unknown controller_mode={controller_mode!r}")
+     device = torch.device("cpu")
+@@ -926,6 +945,10 @@
+             observations,
+             policy["effective_masks"],
+         )
++        standalone_max_pressure = normalized_max_pressure_actions(
++            observations,
++            masks,
++        )
+         teacher_actions = np.asarray(
+             [
+                 episode.corridor.teacher_action(
+@@ -958,6 +981,15 @@
+             actions = teacher_actions
+             effective_masks = np.asarray(masks, dtype=bool)
+             log_probs = np.zeros(agents, dtype=np.float32)
++        elif controller_mode == "max_pressure":
++            actions = standalone_max_pressure
++            effective_masks = np.asarray(masks, dtype=bool)
++            log_probs = np.zeros(agents, dtype=np.float32)
++        elif controller_mode == "native_sumo":
++            actions = policy["base_actions"]
++            effective_masks = np.zeros_like(masks)
++            effective_masks[np.arange(agents), actions] = True
++            log_probs = np.zeros(agents, dtype=np.float32)
+         else:
+             actions = policy["actions"]
+             effective_masks = policy["effective_masks"]
+--- a/map_agnostic_multiagent_worker.py
++++ b/map_agnostic_multiagent_worker.py
+@@ -272,7 +272,26 @@
+             self.episode.args.spawn_batch = 0
+
+         self.episode.args.disable_ambulances = True
+-        self.episode.reset()
++
++        # For the final ambulance benchmark, a Native SUMO arm must leave the
++        # original <tlLogic> completely untouched.  AnchorlessSimulationEpisode
++        # normally builds/activates custom controllers during reset(), so
++        # temporarily replace that builder with an empty one.  Read-only phase
++        # metadata is reconstructed below after SUMO has started.
++        native_sumo_signals = bool(
++            self.config.get("native_sumo_signals", False)
++        )
++        if native_sumo_signals:
++            original_builder = self.sim.build_all_fixed_controllers
++            self.sim.build_all_fixed_controllers = (
++                lambda rng, args: ([], [])
++            )
++            try:
++                self.episode.reset()
++            finally:
++                self.sim.build_all_fixed_controllers = original_builder
++        else:
++            self.episode.reset()
+
+         # Some legacy routing/recovery helpers use global_car for findRoute().
+         # Supply a compatible alias without adding any dynamic vehicles.
+@@ -336,6 +355,28 @@
+             if excluded_prefixes
+             else None,
+         )
++        adapter_controllers = self.episode.controllers
++        if native_sumo_signals:
++            # These controller dictionaries exist only so MapAgnosticTLSAdapter
++            # can map route transitions/link indices to native stable greens.
++            # activate=False is essential: it makes no TraCI signal command.
++            metadata_rng = random.Random(
++                int(scenario.seed) ^ 0x5A17C0DE
++            )
++            adapter_controllers = []
++            for tls_id in sorted(
++                self.sim.traci.trafficlight.getIDList()
++            ):
++                controller = (
++                    self.sim.build_map_agnostic_controller_for_tls(
++                        tls_id,
++                        rng=metadata_rng,
++                        activate=False,
++                    )
++                )
++                if controller is not None:
++                    adapter_controllers.append(controller)
++
+         self.adapters = [
+             adapter_for_controller(
+                 controller,
+@@ -343,7 +384,7 @@
+                 self.sim,
+                 snapshot_cache=self.cache,
+             )
+-            for controller in self.episode.controllers
++            for controller in adapter_controllers
+             if not controller.get("disabled")
+         ]
+         if not self.adapters:
+@@ -436,10 +477,16 @@
+
+     def step(self, actions: np.ndarray, reset_on_done: bool = True):
+         before = list(self.snapshots)
+-        switches = [
+-            self._apply_action(adapter, int(action))
+-            for adapter, action in zip(self.adapters, actions)
+-        ]
++        if bool(self.config.get("native_sumo_signals", False)):
++            # episode.controllers is empty in this mode, so SUMO advances the
++            # map's own traffic-light program.  Never call _apply_action(),
++            # which would invoke setRedYellowGreenState/request_switch.
++            switches = [(False, False)] * len(self.adapters)
++        else:
++            switches = [
++                self._apply_action(adapter, int(action))
++                for adapter, action in zip(self.adapters, actions)
++            ]
+         decision_steps = max(
+             1,
+             int(
