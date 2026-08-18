@@ -188,11 +188,19 @@ def main() -> None:
     parser.add_argument("--netconvert", default="netconvert")
     parser.add_argument("--overpass-endpoints", default=",".join(DEFAULT_ENDPOINTS))
     parser.add_argument("--retries", type=int, default=4)
+    parser.add_argument(
+        "--request-delay-seconds",
+        type=float,
+        default=0.0,
+        help="Polite delay after each successful Overpass download.",
+    )
     parser.add_argument("--min-osm-signals", type=int, default=4)
     parser.add_argument("--min-sumo-tls", type=int, default=2)
     parser.add_argument("--skip-download", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
+    if args.request_delay_seconds < 0.0:
+        parser.error("--request-delay-seconds must be nonnegative")
 
     config = json.loads(args.config.read_text(encoding="utf-8"))
     planned = expand_regions(config, args.seed)
@@ -220,6 +228,8 @@ def main() -> None:
         endpoint = None
         if not args.skip_download and (args.overwrite or not osm_file.exists()):
             endpoint = download_overpass(query, osm_file, endpoints, args.retries)
+            if args.request_delay_seconds > 0.0:
+                time.sleep(args.request_delay_seconds)
         if not osm_file.exists():
             print("  skipped: OSM file absent")
             continue

@@ -7,6 +7,9 @@ lane, and phase layouts.
 An experimental schema-v4 path limits the deployed actor to realistic
 stop-bar/advance detector aggregates and controller state. It keeps shared
 lanes ambiguous and never exposes vehicle routes, exact waits, or oracle ETAs.
+Its separate 32/8/8 map protocol freezes brand-new train, validation, and final
+test regions and checks the final split against the historical schema-v3 map
+plan before either training or evaluation can use it.
 
 ## Repository status
 

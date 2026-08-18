@@ -89,35 +89,37 @@ the same shared policy weights.
   compatibility scan.
 - `compare_native_sumo_vs_detector_realistic.py`: paired native-versus-v4
   evaluator.
+- `map_corpus_regions_v4.json`: frozen 32/8/8 brand-new geographic split.
+- `validate_map_split_protocol.py`: pre/post-generation leakage and manifest
+  lock checks used by the trainer and final evaluator.
 - `tests/test_detector_realistic_*.py`: information-boundary and policy tests.
 
 ## 1. External-machine environment
 
 ```bash
 cd /users/sriramv/sumo_traffic_project
-git fetch origin
-git pull --ff-only origin main
-
-source /users/sriramv/.venvs/sumo-eval-v3/bin/activate
-
-export SUMO_HOME=/usr/share/sumo
+export SUMO_HOME=/users/sriramv/.local/lib/python3.10/site-packages/sumo
+export PATH="$SUMO_HOME/bin:/users/sriramv/.local/bin:$PATH"
 export PYTHONPATH="$SUMO_HOME/tools:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
+hash -r
 
 which python
 which sumo
+which netconvert
 sumo --version
 python -c 'import numpy, torch, gymnasium, traci, sumolib; print("Python/SUMO imports OK")'
 ```
 
-If the existing environment is unavailable, create a project-local one:
+This is the user-level SUMO 1.26 installation used on the current CloudLab
+node; no virtual-environment activation is required. If a working project
+virtual environment is created later, activate it before the exports above.
+
+If `pytest` is missing, install only the development requirements into the
+user environment:
 
 ```bash
-cd /users/sriramv/sumo_traffic_project
-python3 -m venv .venv-traffic
-source .venv-traffic/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
+python -m pip install --user -r requirements-dev.txt
 ```
 
 ## 2. Code tests and SUMO compatibility scan
@@ -126,8 +128,8 @@ Run these before starting a long job:
 
 ```bash
 cd /users/sriramv/sumo_traffic_project
-source /users/sriramv/.venvs/sumo-eval-v3/bin/activate
-export SUMO_HOME=/usr/share/sumo
+export SUMO_HOME=/users/sriramv/.local/lib/python3.10/site-packages/sumo
+export PATH="$SUMO_HOME/bin:/users/sriramv/.local/bin:$PATH"
 export PYTHONPATH="$SUMO_HOME/tools:${PYTHONPATH:-}"
 
 python -m pytest -q \
@@ -141,45 +143,88 @@ python -u traffic_rl_detector_realistic_env.py \
   --list-tls-json
 ```
 
-## 3. Training data
+## 3. Frozen, brand-new map protocol
 
-Reuse `generated_map_corpus/manifest.json` and
-`training_demand_bank_v3/manifest.json` if their files still exist. Demand is
-controller-independent, so it does not need to be regenerated for schema v4.
+Do **not** reuse `generated_map_corpus` or `training_demand_bank_v3` for this
+experiment. Those names belong to the historical schema-v3 campaign. Schema
+v4 uses `map_corpus_regions_v4.json`, seed `20260817`, and separate output
+directories:
 
-If the map corpus is missing, create it first:
+| Split | New maps | Permitted use |
+| --- | ---: | --- |
+| train | 32 | PPO updates and detector randomization |
+| validation | 8 | checkpoint selection only |
+| test | 8 | one locked final evaluation after development ends |
+
+Every v4 region name is new. The protocol also expands the historical
+`map_corpus_regions.json` with its original seed `20260712` and rejects any
+final-test crop that overlaps or lies within 75 km of any historical map or
+any v4 training/validation crop. The closest planned test/exclusion pair is
+more than 129 km apart.
+
+Run the preflight before downloading anything:
+
+```bash
+python -u validate_map_split_protocol.py \
+  --new-config map_corpus_regions_v4.json \
+  --old-config map_corpus_regions.json \
+  --output detector_v4_split_preflight.json
+```
+
+Then generate the new corpus in its own directory:
 
 ```bash
 nohup python -u generate_map_corpus.py \
-  --config map_corpus_regions.json \
-  --output-dir generated_map_corpus \
-  > generate_map_corpus.log 2>&1 &
-echo $! > generate_map_corpus.pid
+  --config map_corpus_regions_v4.json \
+  --seed 20260817 \
+  --output-dir generated_map_corpus_v4 \
+  --request-delay-seconds 2 \
+  > generate_map_corpus_v4.log 2>&1 &
+echo $! > generate_map_corpus_v4.pid
 ```
 
-Wait for that job and verify its manifest before generating demand:
+Wait for generation, then create the post-generation lock. This second check
+requires all 48 planned maps to have passed the OSM/SUMO signal filters; it
+also hashes the exact manifest used by training and final evaluation.
 
 ```bash
-while kill -0 "$(cat generate_map_corpus.pid)" 2>/dev/null; do
-  tail -n 3 generate_map_corpus.log
+while kill -0 "$(cat generate_map_corpus_v4.pid)" 2>/dev/null; do
+  tail -n 3 generate_map_corpus_v4.log
   sleep 30
 done
-test -s generated_map_corpus/manifest.json
+wait "$(cat generate_map_corpus_v4.pid)" 2>/dev/null || true
+test -s generated_map_corpus_v4/manifest.json
+
+python -u validate_map_split_protocol.py \
+  --new-config map_corpus_regions_v4.json \
+  --old-config map_corpus_regions.json \
+  --manifest generated_map_corpus_v4/manifest.json \
+  --output generated_map_corpus_v4/split_protocol_lock.json
+```
+
+If the post-generation check fails because a region was rejected, do not
+reduce a split count or move a test map into development. Replace the rejected
+region in the configuration, assign a new corpus ID/seed, and freeze the
+protocol again before training.
+
+Generate a new demand bank for the 32 new training maps:
+
+```bash
 
 nohup python -u generate_training_demand_bank.py \
-  --manifest generated_map_corpus/manifest.json \
+  --manifest generated_map_corpus_v4/manifest.json \
   --splits train \
-  --output-dir training_demand_bank_v3 \
+  --output-dir training_demand_bank_detector_v4 \
   --rates 4,8,12 \
   --seeds 101,102 \
   --episode-seconds 7200 \
   --workers 8 \
-  > generate_training_demand_bank_v3.log 2>&1 &
-echo $! > generate_training_demand_bank_v3.pid
+  > generate_training_demand_bank_detector_v4.log 2>&1 &
+echo $! > generate_training_demand_bank_detector_v4.pid
 ```
 
 Do not begin training until demand generation exits successfully and the
-demand-bank manifest reports all expected route files.
+demand-bank manifest reports `32 maps x 3 rates x 2 seeds = 192` route files.
 
 ## 4. Foreground smoke training
 
@@ -190,7 +235,8 @@ smoke demand so a 7,200-second fixed-demand bank is not paired with a shorter
 
 ```bash
 python -u train_detector_realistic_multiagent.py \
-  --manifest generated_map_corpus/manifest.json \
+  --manifest generated_map_corpus_v4/manifest.json \
+  --split-protocol-lock generated_map_corpus_v4/split_protocol_lock.json \
   --splits train \
   --model-path models/detector_realistic_v4_smoke \
   --best-model-path models/detector_realistic_v4_smoke_best \
@@ -215,11 +261,11 @@ Run one trainer only. Its map workers already collect concurrently and one
 central learner owns the checkpoint.
 
 ```bash
-nohup /users/sriramv/.venvs/sumo-eval-v3/bin/python -u \
-  train_detector_realistic_multiagent.py \
-  --manifest generated_map_corpus/manifest.json \
+nohup python -u train_detector_realistic_multiagent.py \
+  --manifest generated_map_corpus_v4/manifest.json \
+  --split-protocol-lock generated_map_corpus_v4/split_protocol_lock.json \
   --splits train \
-  --demand-bank-manifest training_demand_bank_v3/manifest.json \
+  --demand-bank-manifest training_demand_bank_detector_v4/manifest.json \
   --model-path models/detector_realistic_multiagent_v4 \
   --best-model-path models/detector_realistic_multiagent_v4_best \
   --sensor-profile mixed \
@@ -228,8 +274,8 @@ nohup /users/sriramv/.venvs/sumo-eval-v3/bin/python -u \
   --detector-dropout-prob 0.03 \
   --detector-stuck-prob 0.01 \
   --max-detector-latency-decisions 1 \
-  --rounds 4 \
-  --num-map-workers 4 \
+  --rounds 6 \
+  --num-map-workers 8 \
   --rollouts-per-map-visit 16 \
   --rollout-steps 64 \
   --episode-seconds 7200 \
@@ -246,7 +292,7 @@ nohup /users/sriramv/.venvs/sumo-eval-v3/bin/python -u \
   --validation-splits validation \
   --validation-seeds 9001,9002 \
   --validation-episode-seconds 600 \
-  --validation-workers 2 \
+  --validation-workers 4 \
   --progress-file detector_realistic_multiagent_progress.json \
   --no-use-libsumo \
   --restart \
@@ -270,7 +316,7 @@ rejects an accidental profile/noise change.
 
 ```bash
 python -u validate_detector_realistic_multiagent.py \
-  --manifest generated_map_corpus/manifest.json \
+  --manifest generated_map_corpus_v4/manifest.json \
   --splits validation \
   --model-path models/detector_realistic_multiagent_v4_best \
   --output-json runs/detector_v4_validation.json \
@@ -282,7 +328,18 @@ python -u validate_detector_realistic_multiagent.py \
   --no-use-libsumo
 ```
 
-## 7. Paired four-controller Fremont/Santa Clara/test-map evaluation
+Before direct validation, rerun the lock check so a changed manifest cannot be
+used accidentally:
+
+```bash
+python -u validate_map_split_protocol.py \
+  --new-config map_corpus_regions_v4.json \
+  --old-config map_corpus_regions.json \
+  --manifest generated_map_corpus_v4/manifest.json \
+  --output generated_map_corpus_v4/split_protocol_lock.json
+```
+
+## 7. Paired four-controller locked final evaluation
 
 The comprehensive launcher accepts the detector-realistic runner and the
 previous schema-v3 checkpoint in one campaign. Detector v4, schema v3,
@@ -290,15 +347,21 @@ MaxPressure, and native SUMO replay the exact same fixed route file for every
 map/rate/seed condition. This makes the v4-versus-v3 result paired rather than
 an informal comparison between separate campaigns.
 
-First run the strict ordinary-loop condition:
+Do not run this section until model design, hyperparameters, and checkpoint
+selection are finished. Looking at these results turns the locked maps into
+development data. The launcher verifies both the manifest hash and exact test
+membership from the post-generation protocol lock.
+
+First run the strict ordinary-loop condition on only the eight frozen maps:
 
 ```bash
 SEEDS=$(seq -s, 1001 1030)
 
 nohup python -u launch_comprehensive_evaluation.py \
-  --benchmarks fremont=new_map.net.xml,santaclara=santa_clara.net.xml \
-  --manifest generated_map_corpus/manifest.json \
+  --benchmarks "" \
+  --manifest generated_map_corpus_v4/manifest.json \
   --manifest-splits test \
+  --split-protocol-lock generated_map_corpus_v4/split_protocol_lock.json \
   --model-path models/detector_realistic_multiagent_v4_best \
   --schema-v3-model models/map_agnostic_multiagent_v3_best \
   --all-model-runner detector_realistic \
@@ -345,3 +408,64 @@ Interpret the loop-only campaign as the primary deployment result, camera as
 the value of upgraded sensing, and schema v3 as an oracle upper bound. Never
 compare controllers on different demand route files or different simulation
 durations.
+
+## 8. Historical maps and the controlled information ablation
+
+Fremont, Santa Clara, Fresno, and San Diego remain useful legacy/external
+benchmarks, but they have already been examined in earlier project work. Run
+them in a separate output directory without `--split-protocol-lock`; never mix
+their statistics into the untouched eight-map primary result.
+
+The frozen schema-v3 checkpoint answers the deployment question: “Does the new
+detector-limited system beat the previously shipped model on maps neither
+checkpoint trained on?” It does not isolate sensing alone because schema v3
+and schema v4 were trained on different corpora.
+
+For a strict observation-boundary ablation, also retrain the schema-v3
+architecture on the exact v4 training manifest and demand bank, select it only
+on the same validation split, and substitute that matched checkpoint for
+`--schema-v3-model` in a second locked campaign. Report the frozen historical
+checkpoint and the matched retrain as separate baselines.
+
+Run the matched schema-v3 training only after the schema-v4 trainer has
+finished, so the two jobs do not compete for the same CPUs:
+
+```bash
+nohup python -u train_map_agnostic_multiagent.py \
+  --manifest generated_map_corpus_v4/manifest.json \
+  --split-protocol-lock generated_map_corpus_v4/split_protocol_lock.json \
+  --splits train \
+  --demand-bank-manifest training_demand_bank_detector_v4/manifest.json \
+  --model-path models/map_agnostic_multiagent_v3_matched \
+  --best-model-path models/map_agnostic_multiagent_v3_matched_best \
+  --rounds 6 \
+  --num-map-workers 8 \
+  --rollouts-per-map-visit 16 \
+  --rollout-steps 64 \
+  --episode-seconds 7200 \
+  --decision-seconds 10 \
+  --max-vehicle-center 1500 \
+  --target-density-range 2,10 \
+  --embed-dim 128 \
+  --graph-layers 2 \
+  --ppo-epochs 4 \
+  --minibatch-size 512 \
+  --teacher-coef 0.10 \
+  --teacher-decay-fraction 0.25 \
+  --validate-every-round \
+  --validation-splits validation \
+  --validation-seeds 9001,9002 \
+  --validation-episode-seconds 600 \
+  --validation-workers 4 \
+  --progress-file map_agnostic_v3_matched_progress.json \
+  --no-use-libsumo \
+  --restart \
+  > map_agnostic_v3_matched_training.log 2>&1 &
+echo $! > map_agnostic_v3_matched_training.pid
+```
+
+For its locked campaign, repeat section 7 with a new output/progress/log name
+and set
+`--schema-v3-model models/map_agnostic_multiagent_v3_matched_best`. The v4,
+matched v3, MaxPressure, and native controllers will again replay identical
+fixed routes within that campaign.

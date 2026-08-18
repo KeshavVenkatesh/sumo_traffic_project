@@ -310,6 +310,65 @@ def file_sha256(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def verify_split_protocol_lock(
+    lock_value: str,
+    manifest_value: str,
+    manifest_splits: set[str],
+    benchmarks: dict[str, Path],
+) -> dict[str, Any] | None:
+    """Bind a primary evaluation to the frozen, post-generation test split."""
+    if not lock_value:
+        return None
+    if not manifest_value:
+        raise RuntimeError("--split-protocol-lock requires --manifest")
+    if manifest_splits != {"test"}:
+        raise RuntimeError(
+            "A locked final evaluation requires --manifest-splits test"
+        )
+    lock_path = Path(lock_value).expanduser().resolve()
+    manifest_path = Path(manifest_value).expanduser().resolve()
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    if lock.get("status") != "valid":
+        raise RuntimeError(f"Split protocol lock is not valid: {lock_path}")
+    generated = lock.get("generated_manifest")
+    if not isinstance(generated, dict) or not generated.get("sha256"):
+        raise RuntimeError(
+            "Split protocol lock is preflight-only; rerun validation with "
+            "--manifest after map generation"
+        )
+    actual_manifest_sha = file_sha256(manifest_path)
+    if actual_manifest_sha != str(generated["sha256"]):
+        raise RuntimeError(
+            "Evaluation manifest does not match the frozen protocol lock"
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    selected_names = {
+        str(record.get("name"))
+        for record in manifest.get("maps", [])
+        if str(record.get("split")) in manifest_splits
+    }
+    expected_names = set(
+        str(name)
+        for name in lock.get("new_corpus", {}).get("final_test_maps", [])
+    )
+    if not expected_names or selected_names != expected_names:
+        raise RuntimeError(
+            "Manifest test maps differ from the frozen protocol lock: "
+            f"selected={sorted(selected_names)}, expected={sorted(expected_names)}"
+        )
+    if set(benchmarks) != expected_names:
+        raise RuntimeError(
+            "A locked primary evaluation may contain only frozen final-test "
+            "maps; run legacy benchmarks in a separate output directory"
+        )
+    return {
+        "path": str(lock_path),
+        "sha256": file_sha256(lock_path),
+        "manifest_sha256": actual_manifest_sha,
+        "final_test_maps": sorted(expected_names),
+    }
+
+
 def protect_campaign_identity(
     args: argparse.Namespace,
     benchmarks: dict[str, Path],
@@ -334,6 +393,7 @@ def protect_campaign_identity(
         "detector_dropout_prob": args.detector_dropout_prob,
         "detector_stuck_prob": args.detector_stuck_prob,
         "max_detector_latency_decisions": args.max_detector_latency_decisions,
+        "split_protocol_lock": args.verified_split_protocol,
         "schema_v3_model": (
             {
                 "path": str(schema_v3_model),
@@ -381,6 +441,14 @@ def main() -> None:
     )
     parser.add_argument("--manifest", default="")
     parser.add_argument("--manifest-splits", default="test")
+    parser.add_argument(
+        "--split-protocol-lock",
+        default="",
+        help=(
+            "Post-generation lock from validate_map_split_protocol.py. When "
+            "set, only its exact frozen test maps may be evaluated."
+        ),
+    )
     parser.add_argument("--model-path", required=True)
     parser.add_argument(
         "--all-model-runner",
@@ -441,10 +509,17 @@ def main() -> None:
     )
     args = parser.parse_args()
     benchmarks = parse_benchmarks(args.benchmarks)
+    manifest_splits = set(parse_csv(args.manifest_splits))
     add_manifest_maps(
         benchmarks,
         args.manifest,
-        set(parse_csv(args.manifest_splits)),
+        manifest_splits,
+    )
+    args.verified_split_protocol = verify_split_protocol_lock(
+        args.split_protocol_lock,
+        args.manifest,
+        manifest_splits,
+        benchmarks,
     )
     rates = [float(value) for value in parse_csv(args.rates)]
     seeds = [int(value) for value in parse_csv(args.seeds)]
