@@ -46,7 +46,7 @@ def parse_benchmarks(raw: str) -> dict[str, Path]:
 
 def parse_legacy_models(values: list[str]) -> dict[str, Path]:
     result = {}
-    reserved = {"native_sumo", "max_pressure", "all_model"}
+    reserved = {"native_sumo", "max_pressure", "all_model", "schema_v3"}
     for item in values:
         if "=" not in item:
             raise ValueError(
@@ -67,6 +67,17 @@ def parse_legacy_models(values: list[str]) -> dict[str, Path]:
             raise FileNotFoundError(path)
         result[name] = path
     return result
+
+
+def parse_optional_model(raw: str) -> Path | None:
+    if not raw:
+        return None
+    path = Path(raw).expanduser().resolve()
+    if path.suffix != ".zip":
+        path = path.with_suffix(".zip")
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    return path
 
 
 def add_manifest_maps(
@@ -185,6 +196,17 @@ def run_job(job: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
             "--model-path",
             str(Path(args.model_path).resolve()),
         ]
+    elif job["controller"] == "schema_v3":
+        script = ROOT / "compare_native_sumo_vs_map_agnostic.py"
+        command = [
+            sys.executable,
+            "-u",
+            str(script),
+            *common,
+            "--skip-native",
+            "--model-path",
+            str(job["model_path"]),
+        ]
     else:
         script = ROOT / "compare_native_sumo_vs_all_model.py"
         command = [
@@ -293,6 +315,7 @@ def protect_campaign_identity(
     benchmarks: dict[str, Path],
     rates: list[float],
     seeds: list[int],
+    schema_v3_model: Path | None,
     legacy_models: dict[str, Path],
 ) -> None:
     model = Path(args.model_path).expanduser().resolve()
@@ -311,6 +334,14 @@ def protect_campaign_identity(
         "detector_dropout_prob": args.detector_dropout_prob,
         "detector_stuck_prob": args.detector_stuck_prob,
         "max_detector_latency_decisions": args.max_detector_latency_decisions,
+        "schema_v3_model": (
+            {
+                "path": str(schema_v3_model),
+                "sha256": file_sha256(schema_v3_model),
+            }
+            if schema_v3_model is not None
+            else None
+        ),
         "legacy_models": {
             name: {
                 "path": str(path),
@@ -369,6 +400,15 @@ def main() -> None:
     parser.add_argument("--detector-stuck-prob", type=float, default=0.0)
     parser.add_argument("--max-detector-latency-decisions", type=int, default=0)
     parser.add_argument(
+        "--schema-v3-model",
+        default="",
+        help=(
+            "Optional previous full-state schema-v3 checkpoint. When set, "
+            "it is evaluated as a fourth controller on the exact same fixed "
+            "demand as detector v4, MaxPressure, and native SUMO."
+        ),
+    )
+    parser.add_argument(
         "--legacy-model",
         action="append",
         default=[],
@@ -408,6 +448,7 @@ def main() -> None:
     )
     rates = [float(value) for value in parse_csv(args.rates)]
     seeds = [int(value) for value in parse_csv(args.seeds)]
+    schema_v3_model = parse_optional_model(args.schema_v3_model)
     legacy_models = parse_legacy_models(args.legacy_model)
     if not rates or not seeds:
         parser.error("--rates and --seeds cannot be empty")
@@ -433,7 +474,7 @@ def main() -> None:
     args.output_dir = args.output_dir.resolve()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     protect_campaign_identity(
-        args, benchmarks, rates, seeds, legacy_models
+        args, benchmarks, rates, seeds, schema_v3_model, legacy_models
     )
 
     random_trips = find_random_trips(args.random_trips)
@@ -493,6 +534,7 @@ def main() -> None:
                     "native_sumo",
                     "max_pressure",
                     "all_model",
+                    *(["schema_v3"] if schema_v3_model is not None else []),
                     *legacy_models,
                 ]
                 for controller in controller_names:
@@ -503,7 +545,11 @@ def main() -> None:
                             "rate": rate,
                             "seed": seed,
                             "controller": controller,
-                            "model_path": legacy_models.get(controller),
+                            "model_path": (
+                                schema_v3_model
+                                if controller == "schema_v3"
+                                else legacy_models.get(controller)
+                            ),
                             "demand_route": demand_lookup[
                                 (map_name, rate, seed)
                             ],

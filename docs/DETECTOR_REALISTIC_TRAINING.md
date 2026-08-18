@@ -282,11 +282,13 @@ python -u validate_detector_realistic_multiagent.py \
   --no-use-libsumo
 ```
 
-## 7. Paired Fremont/Santa Clara/test-map evaluation
+## 7. Paired four-controller Fremont/Santa Clara/test-map evaluation
 
-The comprehensive launcher now accepts the detector-realistic runner while
-retaining the exact same fixed demand for native SUMO, MaxPressure, and the
-learned policy.
+The comprehensive launcher accepts the detector-realistic runner and the
+previous schema-v3 checkpoint in one campaign. Detector v4, schema v3,
+MaxPressure, and native SUMO replay the exact same fixed route file for every
+map/rate/seed condition. This makes the v4-versus-v3 result paired rather than
+an informal comparison between separate campaigns.
 
 First run the strict ordinary-loop condition:
 
@@ -298,6 +300,7 @@ nohup python -u launch_comprehensive_evaluation.py \
   --manifest generated_map_corpus/manifest.json \
   --manifest-splits test \
   --model-path models/detector_realistic_multiagent_v4_best \
+  --schema-v3-model models/map_agnostic_multiagent_v3_best \
   --all-model-runner detector_realistic \
   --sensor-profile loops \
   --output-dir runs/detector_v4_loops \
