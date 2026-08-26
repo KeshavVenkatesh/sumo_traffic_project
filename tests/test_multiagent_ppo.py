@@ -119,9 +119,18 @@ class MultiAgentPPOTests(unittest.TestCase):
             target_kl=0.0,
         )
         trainer = SharedPPOTrainer(args, torch.device("cpu"))
-        metrics = trainer.update([rollout], total_planned_updates=4)
+        optimization_progress = []
+        metrics = trainer.update(
+            [rollout],
+            total_planned_updates=4,
+            progress_callback=lambda completed, total: (
+                optimization_progress.append((completed, total))
+            ),
+        )
         self.assertEqual(trainer.completed_updates, 1)
         self.assertEqual(trainer.agent_transitions, 6)
+        self.assertEqual(optimization_progress[0], (0, 2))
+        self.assertEqual(optimization_progress[-1], (2, 2))
         self.assertTrue(all(math.isfinite(float(value)) for value in metrics.values()))
 
 

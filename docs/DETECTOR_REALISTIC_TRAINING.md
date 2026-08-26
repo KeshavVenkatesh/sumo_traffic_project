@@ -229,10 +229,10 @@ demand-bank manifest reports `32 maps x 3 rates x 2 seeds = 192` route files.
 
 ## 4. Foreground smoke training
 
-This starts one exact SUMO worker, performs one PPO update, exports a schema-v4
-checkpoint, and skips held-out validation. It intentionally uses the dynamic
-smoke demand so a 7,200-second fixed-demand bank is not paired with a shorter
-600-second episode:
+This starts one exact SUMO worker, visits each of the 32 training maps once,
+performs 32 short PPO updates, exports a schema-v4 checkpoint, and skips
+held-out validation. It intentionally uses the dynamic smoke demand so a
+7,200-second fixed-demand bank is not paired with a shorter 600-second episode:
 
 ```bash
 python -u train_detector_realistic_multiagent.py \
@@ -287,6 +287,7 @@ nohup python -u train_detector_realistic_multiagent.py \
   --graph-layers 2 \
   --ppo-epochs 4 \
   --minibatch-size 512 \
+  --torch-threads 16 \
   --teacher-coef 0.10 \
   --teacher-decay-fraction 0.25 \
   --validate-every-round \

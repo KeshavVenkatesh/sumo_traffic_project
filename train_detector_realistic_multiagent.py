@@ -16,7 +16,7 @@ import sys
 import time
 from multiprocessing.connection import wait
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import gymnasium as gym
 import numpy as np
@@ -328,6 +328,7 @@ class SharedPPOTrainer:
         self,
         rollouts: list[dict[str, Any]],
         total_planned_updates: int,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> dict[str, float]:
         batch = flatten_rollouts(rollouts)
         sample_count = len(batch["actions"])
@@ -360,6 +361,15 @@ class SharedPPOTrainer:
         }
         self.network.train()
         stop_early = False
+        optimizer_steps_total = self.args.ppo_epochs * math.ceil(
+            sample_count / self.args.minibatch_size
+        )
+        optimizer_steps_completed = 0
+        progress_interval = max(1, optimizer_steps_total // 100)
+        last_reported_step = -1
+        if progress_callback is not None:
+            progress_callback(0, optimizer_steps_total)
+            last_reported_step = 0
         for _epoch in range(self.args.ppo_epochs):
             np.random.shuffle(indices)
             for start in range(0, sample_count, self.args.minibatch_size):
@@ -506,6 +516,16 @@ class SharedPPOTrainer:
                 metric_totals["clip_fraction"] += float(clip_fraction.item())
                 metric_totals["teacher_loss"] += float(teacher_loss.item())
                 metric_totals["updates"] += 1.0
+                optimizer_steps_completed += 1
+                if progress_callback is not None and (
+                    optimizer_steps_completed == optimizer_steps_total
+                    or optimizer_steps_completed % progress_interval == 0
+                ):
+                    progress_callback(
+                        optimizer_steps_completed,
+                        optimizer_steps_total,
+                    )
+                    last_reported_step = optimizer_steps_completed
                 if (
                     self.args.target_kl > 0
                     and float(approx_kl.item()) > 1.5 * self.args.target_kl
@@ -514,6 +534,15 @@ class SharedPPOTrainer:
                     break
             if stop_early:
                 break
+
+        if (
+            progress_callback is not None
+            and last_reported_step != optimizer_steps_completed
+        ):
+            progress_callback(
+                optimizer_steps_completed,
+                optimizer_steps_total,
+            )
 
         self.completed_updates += 1
         denominator = max(1.0, metric_totals.pop("updates"))
@@ -1213,6 +1242,7 @@ def main() -> None:
     )
     print("  transition source:       every usable TLS in every map worker")
     print("  map weighting:           equal map weight; balanced topology buckets")
+    print(f"  learner CPU threads:     {torch.get_num_threads()}")
     print(f"  model:                   {model_zip(args.model_path)}")
 
     if trainer.completed_updates >= total_updates and (
@@ -1285,8 +1315,70 @@ def main() -> None:
                         collection_metrics = [
                             rollout["metrics"] for rollout in rollouts
                         ]
+                        optimization_samples = sum(
+                            int(np.asarray(rollout["actions"]).size)
+                            for rollout in rollouts
+                        )
+                        optimization_start_wall = time.monotonic()
+                        last_optimization_bucket = [-1]
+
+                        def report_optimization_progress(
+                            completed_steps: int,
+                            total_steps: int,
+                        ) -> None:
+                            fraction = completed_steps / max(1, total_steps)
+                            elapsed = time.monotonic() - optimization_start_wall
+                            remaining = (
+                                elapsed
+                                * (total_steps - completed_steps)
+                                / completed_steps
+                                if completed_steps > 0
+                                else None
+                            )
+                            bucket = int(10.0 * fraction)
+                            if (
+                                completed_steps == 0
+                                or completed_steps == total_steps
+                                or bucket > last_optimization_bucket[0]
+                            ):
+                                print(
+                                    f"[optimize] {100.0 * fraction:5.1f}% "
+                                    f"({completed_steps}/{total_steps} minibatches, "
+                                    f"samples={optimization_samples}, "
+                                    f"threads={torch.get_num_threads()})",
+                                    flush=True,
+                                )
+                                last_optimization_bucket[0] = bucket
+                            extra = {
+                                "round": round_index + 1,
+                                "wave": wave_index + 1,
+                                "visit": visit + 1,
+                                "overall_percent": 100.0
+                                * (trainer.completed_updates + fraction)
+                                / max(1, total_updates),
+                                "optimization_samples": optimization_samples,
+                                "optimization_steps_completed": completed_steps,
+                                "optimization_steps_total": total_steps,
+                                "optimization_percent": 100.0 * fraction,
+                                "optimization_elapsed_seconds": elapsed,
+                            }
+                            if remaining is not None:
+                                extra[
+                                    "optimization_estimated_seconds_remaining"
+                                ] = remaining
+                            write_progress(
+                                args,
+                                trainer,
+                                total_updates,
+                                {},
+                                status="optimizing",
+                                extra=extra,
+                            )
+
                         update_metrics = trainer.update(
-                            rollouts, total_updates
+                            rollouts,
+                            total_updates,
+                            progress_callback=report_optimization_progress,
                         )
                         trainer.save_trainer(args)
                         export_sb3_checkpoint(trainer, args)
