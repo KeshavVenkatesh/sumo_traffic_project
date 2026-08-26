@@ -9,6 +9,10 @@ import numpy as np
 try:
     import torch
 
+    from detector_realistic_tls import (
+        MAX_PHASES as DETECTOR_MAX_PHASES,
+        empty_observation as detector_empty_observation,
+    )
     from map_agnostic_multiagent_worker import normalized_max_pressure_actions
     from map_agnostic_tls import MAX_PHASES, empty_observation
     from train_map_agnostic_multiagent import SharedPPOTrainer, flatten_rollouts
@@ -80,6 +84,16 @@ class MultiAgentPPOTests(unittest.TestCase):
         masks[1, [0, 2]] = True
         actions = normalized_max_pressure_actions(observations, masks)
         self.assertTrue(all(masks[i, action] for i, action in enumerate(actions)))
+
+    def test_teacher_uses_detector_observation_phase_capacity(self):
+        observation = detector_empty_observation()
+        observation["phase_features"][16, 3] = 1.0
+        masks = np.zeros((1, DETECTOR_MAX_PHASES + 1), dtype=bool)
+        masks[0, [0, 17]] = True
+
+        actions = normalized_max_pressure_actions([observation], masks)
+
+        self.assertEqual(actions.tolist(), [17])
 
     def test_flatten_and_weighted_ppo_update(self):
         rollout = self.rollout()
