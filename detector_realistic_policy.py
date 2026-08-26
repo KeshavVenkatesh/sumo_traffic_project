@@ -16,10 +16,11 @@ from map_agnostic_policy import MapAgnosticMaskablePolicy, MovementGraphNetwork
 class DetectorGraphNetwork(MovementGraphNetwork):
     """The proven phase-scoring GNN applied to detector-history features.
 
-    Schema v4 intentionally keeps the 24/8/8 tensor dimensions from schema v3.
-    Temporal information is encoded through rolling 10/60-second detector
-    measurements and conservation-based state estimates, while this network
-    retains the map- and permutation-equivariant spatial inductive bias.
+    Schema v4 keeps the same per-lane/per-phase feature dimensions as schema
+    v3, but permits a larger padded phase catalog. Temporal information is
+    encoded through rolling 10/60-second detector measurements and
+    conservation-based state estimates, while this network retains the map-
+    and permutation-equivariant spatial inductive bias.
     """
 
 

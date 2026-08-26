@@ -16,6 +16,7 @@ import torch
 from sb3_contrib import MaskablePPO
 
 from detector_realistic_multiagent_worker import rollout_worker_main
+from detector_realistic_tls import MAX_MOVEMENTS, MAX_PHASES
 from train_map_agnostic_multimap import load_maps, parse_csv, passenger_lane_km
 
 
@@ -50,6 +51,16 @@ def validate_checkpoint_metadata(path: str | Path) -> dict[str, Any]:
             f"Expected policy_class={expected_policy!r} in {metadata_file}; "
             f"found {metadata.get('policy_class')!r}."
         )
+    expected_dimensions = {
+        "max_movements": MAX_MOVEMENTS,
+        "max_phases": MAX_PHASES,
+    }
+    for field, expected in expected_dimensions.items():
+        if int(metadata.get(field, -1)) != expected:
+            raise ValueError(
+                f"Expected {field}={expected} in {metadata_file}; "
+                f"found {metadata.get(field)!r}."
+            )
     return metadata
 
 

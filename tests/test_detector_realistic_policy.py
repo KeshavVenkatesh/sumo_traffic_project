@@ -9,6 +9,7 @@ try:
 
     from detector_realistic_policy import DetectorRealisticMaskablePolicy
     from detector_realistic_tls import MAX_PHASES, empty_observation, observation_space
+    from map_agnostic_tls import MAX_PHASES as SCHEMA_V3_MAX_PHASES
 
     HAVE_RL = True
 except ImportError:
@@ -17,6 +18,10 @@ except ImportError:
 
 @unittest.skipUnless(HAVE_RL, "PyTorch/Gym/SB3 dependencies are not installed")
 class DetectorPolicyEquivarianceTests(unittest.TestCase):
+    def test_detector_phase_cap_is_independent_of_schema_v3(self):
+        self.assertEqual(SCHEMA_V3_MAX_PHASES, 16)
+        self.assertEqual(MAX_PHASES, 32)
+
     def test_lane_group_permutation_does_not_change_phase_scores(self):
         policy = DetectorRealisticMaskablePolicy(
             observation_space(),
@@ -41,6 +46,7 @@ class DetectorPolicyEquivarianceTests(unittest.TestCase):
 
         with torch.no_grad():
             first, _ = policy.map_network(tensorize(observation))
+        self.assertEqual(first.shape, (1, MAX_PHASES + 1))
         permutation = [2, 0, 1]
         moved = {key: value.copy() for key, value in observation.items()}
         moved["movements"][:3] = observation["movements"][permutation]

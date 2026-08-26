@@ -33,6 +33,7 @@ from detector_realistic_policy import (
 )
 from detector_realistic_tls import (
     GLOBAL_FEATURE_NAMES,
+    MAX_MOVEMENTS,
     MAX_PHASES,
     MOVEMENT_FEATURE_NAMES,
     PHASE_FEATURE_NAMES,
@@ -175,6 +176,21 @@ def audit_manifest_splits(
             "Validation is enabled but the manifest has no map in "
             f"--validation-splits={','.join(sorted(validation_splits))}."
         )
+    phase_records = [
+        (
+            str(record.get("name") or record.get("net_file") or record.get("path")),
+            str(record.get("split", "train")),
+            int(record.get("max_stable_phase_candidates", 0) or 0),
+        )
+        for record in records
+        if int(record.get("max_stable_phase_candidates", 0) or 0) > 0
+    ]
+    over_phase_cap = [record for record in phase_records if record[2] > MAX_PHASES]
+    if over_phase_cap:
+        raise RuntimeError(
+            f"Manifest contains TLS catalogs above detector MAX_PHASES={MAX_PHASES}: "
+            + json.dumps(over_phase_cap, sort_keys=True)
+        )
     print(
         "Manifest split audit: "
         + ", ".join(
@@ -184,6 +200,14 @@ def audit_manifest_splits(
         + " (no path/content leakage)",
         flush=True,
     )
+    if phase_records:
+        maximum_record = max(phase_records, key=lambda record: record[2])
+        print(
+            "Manifest detector phase-cap audit: "
+            f"maximum={maximum_record[2]} on {maximum_record[0]} "
+            f"({maximum_record[1]}), MAX_PHASES={MAX_PHASES}",
+            flush=True,
+        )
 
 
 def flatten_rollouts(rollouts: list[dict[str, Any]]) -> dict[str, np.ndarray]:
@@ -595,6 +619,8 @@ def export_sb3_checkpoint(
         "global_features": list(GLOBAL_FEATURE_NAMES),
         "embed_dim": args.embed_dim,
         "graph_layers": args.graph_layers,
+        "max_movements": MAX_MOVEMENTS,
+        "max_phases": MAX_PHASES,
         "decision_seconds": args.decision_seconds,
         "sensor_profile": args.sensor_profile,
         "stopbar_zone_meters": args.stopbar_zone_meters,
@@ -1138,6 +1164,8 @@ def main() -> None:
         "seed": args.seed,
         "embed_dim": args.embed_dim,
         "graph_layers": args.graph_layers,
+        "max_movements": MAX_MOVEMENTS,
+        "max_phases": MAX_PHASES,
         "sensor_profile": args.sensor_profile,
         "stopbar_zone_meters": args.stopbar_zone_meters,
         "advance_distance_meters": args.advance_distance_meters,

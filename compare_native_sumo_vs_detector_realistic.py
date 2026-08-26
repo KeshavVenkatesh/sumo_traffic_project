@@ -14,6 +14,7 @@ import numpy as np
 
 import compare_fixed_vs_single_vs_all_model_realistic as cmp
 from detector_realistic_tls import (
+    MAX_MOVEMENTS,
     MAX_PHASES,
     DetectorTrafficSnapshot,
     adapter_for_controller,
@@ -68,6 +69,16 @@ def verify_detector_checkpoint(path: str | Path) -> dict:
             f"Refusing incompatible policy in {metadata_file}: "
             f"{metadata.get('policy_class')!r}."
         )
+    expected_dimensions = {
+        "max_movements": MAX_MOVEMENTS,
+        "max_phases": MAX_PHASES,
+    }
+    for field, expected in expected_dimensions.items():
+        if int(metadata.get(field, -1)) != expected:
+            raise ValueError(
+                f"Refusing incompatible {field} in {metadata_file}: "
+                f"expected {expected}, found {metadata.get(field)!r}."
+            )
     trained_decision_seconds = float(metadata.get("decision_seconds", 0.0))
     if trained_decision_seconds <= 0.0:
         raise ValueError(f"Invalid decision_seconds in {metadata_file}.")

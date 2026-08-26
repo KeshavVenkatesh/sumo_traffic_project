@@ -19,7 +19,6 @@ from sb3_contrib.common.maskable.policies import MaskableActorCriticPolicy
 from map_agnostic_tls import (
     GLOBAL_FEATURE_DIM,
     MAX_MOVEMENTS,
-    MAX_PHASES,
     MOVEMENT_FEATURE_DIM,
     PHASE_FEATURE_DIM,
 )
@@ -152,7 +151,12 @@ class MovementGraphNetwork(nn.Module):
 
         global_embedding = self.global_encoder(global_features)
         phase_static = self.phase_feature_encoder(phase_features)
-        expanded_global = global_embedding.unsqueeze(1).expand(-1, MAX_PHASES, -1)
+        # Derive the padded phase dimension from the observation. Detector
+        # schema v4 deliberately uses a larger phase catalog than historical
+        # schema v3, while reusing this weight-shared scorer. No learned
+        # parameter depends on the padded phase count.
+        phase_slots = int(phase_features.shape[1])
+        expanded_global = global_embedding.unsqueeze(1).expand(-1, phase_slots, -1)
         phase_input = th.cat([phase_embedding, phase_static, expanded_global], dim=-1)
         phase_logits = self.phase_scorer(phase_input).squeeze(-1)
 
@@ -199,9 +203,19 @@ class MapAgnosticMaskablePolicy(MaskableActorCriticPolicy):
     ):
         if not isinstance(observation_space, spaces.Dict):
             raise TypeError("MapAgnosticMaskablePolicy requires a Gymnasium Dict observation space.")
-        if not isinstance(action_space, spaces.Discrete) or int(action_space.n) != MAX_PHASES + 1:
+        phase_space = observation_space.spaces.get("phase_features")
+        if phase_space is None or len(phase_space.shape) != 2:
             raise TypeError(
-                f"Expected Discrete({MAX_PHASES + 1}) action space (hold + padded phase candidates)."
+                "Expected a two-dimensional phase_features observation space."
+            )
+        expected_actions = int(phase_space.shape[0]) + 1
+        if (
+            not isinstance(action_space, spaces.Discrete)
+            or int(action_space.n) != expected_actions
+        ):
+            raise TypeError(
+                f"Expected Discrete({expected_actions}) action space "
+                "(hold + padded phase candidates)."
             )
         self.embed_dim = int(embed_dim)
         self.graph_layers = int(graph_layers)

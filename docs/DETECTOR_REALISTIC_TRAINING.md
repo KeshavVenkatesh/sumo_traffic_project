@@ -7,10 +7,11 @@ banks, and held-out validation. The primary change is the detector-limited
 information boundary used by both the actor and its training reward.
 
 The schema-v3 checkpoint remains the oracle/full-state upper bound. Schema-v3
-and schema-v4 checkpoints are not interchangeable even though their padded
-tensor dimensions match. The validation and comparison entry points require
-the v4 metadata sidecar and reject a v3 or otherwise incompatible checkpoint
-instead of silently running it against detector observations.
+and schema-v4 checkpoints are not interchangeable. Schema v4 uses a larger
+padded phase catalog for complex joined controllers. The validation and
+comparison entry points require the v4 metadata sidecar and reject a v3 or
+otherwise incompatible checkpoint instead of silently running it against
+detector observations.
 
 ## What the actor can and cannot observe
 
@@ -57,7 +58,7 @@ serve different intersections.
 | Scope | Fields |
 | --- | --- |
 | Incoming detector lane (up to 160) | stop-bar presence; short/60-second stop-bar occupancy; advance presence; short/60-second advance occupancy; short/60-second arrival rate; short/60-second departure rate; estimated queue; queue trend; estimated delay; optional speed ratio; optional downstream occupancy; estimated pressure; detector-call duration; currently green; time since service; left/straight/right lane permissions; speed-available flag; sensor health |
-| Candidate phase (up to 16) | current-phase flag; elapsed green; mean estimated queue; mean estimated pressure; mean downstream space; maximum detector-call duration; detector coverage; mean arrival rate |
+| Candidate phase (up to 32) | current-phase flag; elapsed green; mean estimated queue; mean estimated pressure; mean downstream space; maximum detector-call duration; detector coverage; mean arrival rate |
 | Local intersection | elapsed green; minimum-green progress; mean stop-bar occupancy; mean estimated queue; mean arrival rate; mean downstream occupancy; maximum time since service; detector coverage |
 
 There is no network-wide traffic state. Each TLS makes a local decision using

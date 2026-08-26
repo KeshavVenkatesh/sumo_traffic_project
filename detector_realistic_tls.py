@@ -27,7 +27,6 @@ from map_agnostic_tls import (
     DEFAULT_MAX_GREEN,
     DEFAULT_MIN_GREEN,
     MAX_MOVEMENTS,
-    MAX_PHASES,
     ObservationSnapshot,
     RewardWeights,
     SATURATION_FLOW_PER_LANE,
@@ -42,10 +41,15 @@ from map_agnostic_tls import (
 
 SCHEMA_VERSION = 4
 
-# The tensor dimensions intentionally match schema v3 so the proven
-# permutation-equivariant graph architecture can be reused.  Feature semantics
-# and checkpoint metadata are different, so v3 and v4 checkpoints must never
-# be interchanged.
+# Detector schema v4 needs a larger catalog than historical schema v3 because
+# the frozen corpus contains joined native controllers with more than sixteen
+# distinct stable green states. Keep this v4-only so existing schema-v3
+# checkpoints retain their original Discrete(17) action space.
+MAX_PHASES = 32
+
+# Feature dimensions retain the proven permutation-equivariant graph
+# architecture. Schema v4 uses its own padded phase dimension and checkpoint
+# metadata, so v3 and v4 checkpoints must never be interchanged.
 DETECTOR_FEATURE_NAMES = (
     "stopbar_presence",
     "stopbar_occupancy_short",
