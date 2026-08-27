@@ -14,8 +14,10 @@ try:
         empty_observation as detector_empty_observation,
     )
     from map_agnostic_multiagent_worker import normalized_max_pressure_actions
-    from map_agnostic_tls import MAX_PHASES, empty_observation
-    from train_map_agnostic_multiagent import SharedPPOTrainer, flatten_rollouts
+    from train_detector_realistic_multiagent import (
+        SharedPPOTrainer,
+        flatten_rollouts,
+    )
 
     HAS_RL = True
 except ImportError:
@@ -27,7 +29,7 @@ class MultiAgentPPOTests(unittest.TestCase):
     def observations(self):
         result = []
         for index in range(2):
-            observation = empty_observation()
+            observation = detector_empty_observation()
             observation["movement_mask"][:2] = 1.0
             observation["phase_membership"][0, 0] = 1.0
             observation["phase_membership"][1, 1] = 1.0
@@ -57,7 +59,7 @@ class MultiAgentPPOTests(unittest.TestCase):
             )
         }
         action_masks = np.zeros(
-            (time_steps, agents, MAX_PHASES + 1), dtype=np.uint8
+            (time_steps, agents, DETECTOR_MAX_PHASES + 1), dtype=np.uint8
         )
         action_masks[..., :3] = 1
         return {
@@ -79,7 +81,7 @@ class MultiAgentPPOTests(unittest.TestCase):
 
     def test_teacher_never_selects_a_masked_action(self):
         observations = self.observations()
-        masks = np.zeros((2, MAX_PHASES + 1), dtype=bool)
+        masks = np.zeros((2, DETECTOR_MAX_PHASES + 1), dtype=bool)
         masks[0, [0, 1]] = True
         masks[1, [0, 2]] = True
         actions = normalized_max_pressure_actions(observations, masks)
