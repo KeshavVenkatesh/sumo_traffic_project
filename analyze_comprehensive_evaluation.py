@@ -29,6 +29,36 @@ COMPARISONS = (
 )
 
 
+def comparisons_for_controllers(
+    controller_names: set[str],
+) -> list[tuple[str, str, str]]:
+    comparisons = list(COMPARISONS)
+    if "schema_v3" in controller_names:
+        comparisons.extend(
+            [
+                ("schema_v3", "native_sumo", "schema_v3_vs_native"),
+                (
+                    "schema_v3",
+                    "max_pressure",
+                    "schema_v3_vs_max_pressure",
+                ),
+                (
+                    "all_model",
+                    "schema_v3",
+                    "detector_v4_vs_schema_v3",
+                ),
+            ]
+        )
+    for controller in sorted(
+        controller_names
+        - {"native_sumo", "max_pressure", "all_model", "schema_v3"}
+    ):
+        comparisons.append(
+            (controller, "native_sumo", f"{controller}_vs_native")
+        )
+    return comparisons
+
+
 def load_condition(path: Path) -> dict[str, dict[int, dict[str, str]]]:
     controllers: dict[str, dict[int, dict[str, str]]] = {}
     with path.open(newline="", encoding="utf-8") as handle:
@@ -274,14 +304,7 @@ def main() -> None:
     controller_names = set.intersection(
         *(set(condition["controllers"]) for condition in conditions)
     )
-    comparisons = list(COMPARISONS)
-    for controller in sorted(
-        controller_names
-        - {"native_sumo", "max_pressure", "all_model"}
-    ):
-        comparisons.append(
-            (controller, "native_sumo", f"{controller}_vs_native")
-        )
+    comparisons = comparisons_for_controllers(controller_names)
 
     rows: list[dict[str, Any]] = []
     print("=" * 148)

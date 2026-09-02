@@ -46,7 +46,7 @@ def parse_benchmarks(raw: str) -> dict[str, Path]:
 
 def parse_legacy_models(values: list[str]) -> dict[str, Path]:
     result = {}
-    reserved = {"native_sumo", "max_pressure", "all_model"}
+    reserved = {"native_sumo", "max_pressure", "all_model", "schema_v3"}
     for item in values:
         if "=" not in item:
             raise ValueError(
@@ -67,6 +67,17 @@ def parse_legacy_models(values: list[str]) -> dict[str, Path]:
             raise FileNotFoundError(path)
         result[name] = path
     return result
+
+
+def parse_optional_model(raw: str) -> Path | None:
+    if not raw:
+        return None
+    path = Path(raw).expanduser().resolve()
+    if path.suffix != ".zip":
+        path = path.with_suffix(".zip")
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    return path
 
 
 def add_manifest_maps(
@@ -171,7 +182,11 @@ def run_job(job: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
             "--skip-native",
         ]
     elif job["controller"] == "all_model":
-        script = ROOT / "compare_native_sumo_vs_map_agnostic.py"
+        script = ROOT / (
+            "compare_native_sumo_vs_detector_realistic.py"
+            if args.all_model_runner == "detector_realistic"
+            else "compare_native_sumo_vs_map_agnostic.py"
+        )
         command = [
             sys.executable,
             "-u",
@@ -180,6 +195,17 @@ def run_job(job: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
             "--skip-native",
             "--model-path",
             str(Path(args.model_path).resolve()),
+        ]
+    elif job["controller"] == "schema_v3":
+        script = ROOT / "compare_native_sumo_vs_map_agnostic.py"
+        command = [
+            sys.executable,
+            "-u",
+            str(script),
+            *common,
+            "--skip-native",
+            "--model-path",
+            str(job["model_path"]),
         ]
     else:
         script = ROOT / "compare_native_sumo_vs_all_model.py"
@@ -196,6 +222,17 @@ def run_job(job: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     environment = os.environ.copy()
     environment["TRAFFIC_NET_FILE"] = str(job["net_file"])
     environment["MAP_AGNOSTIC_MAX_ACTIVE_CAP"] = str(args.max_vehicles)
+    environment["DETECTOR_SENSOR_PROFILE"] = args.sensor_profile
+    environment["DETECTOR_DECISION_SECONDS"] = str(args.model_update_period)
+    environment["DETECTOR_NOISE_STD"] = str(args.detector_noise_std)
+    environment["DETECTOR_CALIBRATION_JITTER"] = str(
+        args.detector_calibration_jitter
+    )
+    environment["DETECTOR_DROPOUT_PROB"] = str(args.detector_dropout_prob)
+    environment["DETECTOR_STUCK_PROB"] = str(args.detector_stuck_prob)
+    environment["DETECTOR_MAX_LATENCY_DECISIONS"] = str(
+        args.max_detector_latency_decisions
+    )
     start_wall = time.monotonic()
     with log.open("w", encoding="utf-8") as handle:
         result = subprocess.run(
@@ -273,11 +310,71 @@ def file_sha256(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def verify_split_protocol_lock(
+    lock_value: str,
+    manifest_value: str,
+    manifest_splits: set[str],
+    benchmarks: dict[str, Path],
+) -> dict[str, Any] | None:
+    """Bind a primary evaluation to the frozen, post-generation test split."""
+    if not lock_value:
+        return None
+    if not manifest_value:
+        raise RuntimeError("--split-protocol-lock requires --manifest")
+    if manifest_splits != {"test"}:
+        raise RuntimeError(
+            "A locked final evaluation requires --manifest-splits test"
+        )
+    lock_path = Path(lock_value).expanduser().resolve()
+    manifest_path = Path(manifest_value).expanduser().resolve()
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    if lock.get("status") != "valid":
+        raise RuntimeError(f"Split protocol lock is not valid: {lock_path}")
+    generated = lock.get("generated_manifest")
+    if not isinstance(generated, dict) or not generated.get("sha256"):
+        raise RuntimeError(
+            "Split protocol lock is preflight-only; rerun validation with "
+            "--manifest after map generation"
+        )
+    actual_manifest_sha = file_sha256(manifest_path)
+    if actual_manifest_sha != str(generated["sha256"]):
+        raise RuntimeError(
+            "Evaluation manifest does not match the frozen protocol lock"
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    selected_names = {
+        str(record.get("name"))
+        for record in manifest.get("maps", [])
+        if str(record.get("split")) in manifest_splits
+    }
+    expected_names = set(
+        str(name)
+        for name in lock.get("new_corpus", {}).get("final_test_maps", [])
+    )
+    if not expected_names or selected_names != expected_names:
+        raise RuntimeError(
+            "Manifest test maps differ from the frozen protocol lock: "
+            f"selected={sorted(selected_names)}, expected={sorted(expected_names)}"
+        )
+    if set(benchmarks) != expected_names:
+        raise RuntimeError(
+            "A locked primary evaluation may contain only frozen final-test "
+            "maps; run legacy benchmarks in a separate output directory"
+        )
+    return {
+        "path": str(lock_path),
+        "sha256": file_sha256(lock_path),
+        "manifest_sha256": actual_manifest_sha,
+        "final_test_maps": sorted(expected_names),
+    }
+
+
 def protect_campaign_identity(
     args: argparse.Namespace,
     benchmarks: dict[str, Path],
     rates: list[float],
     seeds: list[int],
+    schema_v3_model: Path | None,
     legacy_models: dict[str, Path],
 ) -> None:
     model = Path(args.model_path).expanduser().resolve()
@@ -289,6 +386,22 @@ def protect_campaign_identity(
         "schema_version": 1,
         "model_path": str(model),
         "model_sha256": file_sha256(model),
+        "all_model_runner": args.all_model_runner,
+        "sensor_profile": args.sensor_profile,
+        "detector_noise_std": args.detector_noise_std,
+        "detector_calibration_jitter": args.detector_calibration_jitter,
+        "detector_dropout_prob": args.detector_dropout_prob,
+        "detector_stuck_prob": args.detector_stuck_prob,
+        "max_detector_latency_decisions": args.max_detector_latency_decisions,
+        "split_protocol_lock": args.verified_split_protocol,
+        "schema_v3_model": (
+            {
+                "path": str(schema_v3_model),
+                "sha256": file_sha256(schema_v3_model),
+            }
+            if schema_v3_model is not None
+            else None
+        ),
         "legacy_models": {
             name: {
                 "path": str(path),
@@ -328,7 +441,41 @@ def main() -> None:
     )
     parser.add_argument("--manifest", default="")
     parser.add_argument("--manifest-splits", default="test")
+    parser.add_argument(
+        "--split-protocol-lock",
+        default="",
+        help=(
+            "Post-generation lock from validate_map_split_protocol.py. When "
+            "set, only its exact frozen test maps may be evaluated."
+        ),
+    )
     parser.add_argument("--model-path", required=True)
+    parser.add_argument(
+        "--all-model-runner",
+        choices=("map_agnostic", "detector_realistic"),
+        default="map_agnostic",
+        help="Observation/controller adapter used for the learned checkpoint.",
+    )
+    parser.add_argument(
+        "--sensor-profile",
+        choices=("loops", "camera", "mixed"),
+        default="mixed",
+        help="Used only with --all-model-runner detector_realistic.",
+    )
+    parser.add_argument("--detector-noise-std", type=float, default=0.0)
+    parser.add_argument("--detector-calibration-jitter", type=float, default=0.0)
+    parser.add_argument("--detector-dropout-prob", type=float, default=0.0)
+    parser.add_argument("--detector-stuck-prob", type=float, default=0.0)
+    parser.add_argument("--max-detector-latency-decisions", type=int, default=0)
+    parser.add_argument(
+        "--schema-v3-model",
+        default="",
+        help=(
+            "Optional previous full-state schema-v3 checkpoint. When set, "
+            "it is evaluated as a fourth controller on the exact same fixed "
+            "demand as detector v4, MaxPressure, and native SUMO."
+        ),
+    )
     parser.add_argument(
         "--legacy-model",
         action="append",
@@ -362,13 +509,21 @@ def main() -> None:
     )
     args = parser.parse_args()
     benchmarks = parse_benchmarks(args.benchmarks)
+    manifest_splits = set(parse_csv(args.manifest_splits))
     add_manifest_maps(
         benchmarks,
         args.manifest,
-        set(parse_csv(args.manifest_splits)),
+        manifest_splits,
+    )
+    args.verified_split_protocol = verify_split_protocol_lock(
+        args.split_protocol_lock,
+        args.manifest,
+        manifest_splits,
+        benchmarks,
     )
     rates = [float(value) for value in parse_csv(args.rates)]
     seeds = [int(value) for value in parse_csv(args.seeds)]
+    schema_v3_model = parse_optional_model(args.schema_v3_model)
     legacy_models = parse_legacy_models(args.legacy_model)
     if not rates or not seeds:
         parser.error("--rates and --seeds cannot be empty")
@@ -381,10 +536,20 @@ def main() -> None:
         or args.demand_generation_workers <= 0
     ):
         parser.error("durations, steps, and worker counts must be positive")
+    detector_probabilities = (
+        args.detector_dropout_prob,
+        args.detector_stuck_prob,
+    )
+    if any(value < 0.0 or value > 1.0 for value in detector_probabilities):
+        parser.error("Detector probabilities must be in [0, 1]")
+    if args.detector_noise_std < 0.0 or args.detector_calibration_jitter < 0.0:
+        parser.error("Detector noise and calibration jitter must be nonnegative")
+    if args.max_detector_latency_decisions < 0:
+        parser.error("--max-detector-latency-decisions must be nonnegative")
     args.output_dir = args.output_dir.resolve()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     protect_campaign_identity(
-        args, benchmarks, rates, seeds, legacy_models
+        args, benchmarks, rates, seeds, schema_v3_model, legacy_models
     )
 
     random_trips = find_random_trips(args.random_trips)
@@ -444,6 +609,7 @@ def main() -> None:
                     "native_sumo",
                     "max_pressure",
                     "all_model",
+                    *(["schema_v3"] if schema_v3_model is not None else []),
                     *legacy_models,
                 ]
                 for controller in controller_names:
@@ -454,7 +620,11 @@ def main() -> None:
                             "rate": rate,
                             "seed": seed,
                             "controller": controller,
-                            "model_path": legacy_models.get(controller),
+                            "model_path": (
+                                schema_v3_model
+                                if controller == "schema_v3"
+                                else legacy_models.get(controller)
+                            ),
                             "demand_route": demand_lookup[
                                 (map_name, rate, seed)
                             ],

@@ -4,6 +4,13 @@ Research code for training and evaluating a shared schema-v3 reinforcement-learn
 traffic-signal controller across SUMO road networks with different intersection,
 lane, and phase layouts.
 
+An experimental schema-v4 path limits the deployed actor to realistic
+stop-bar/advance detector aggregates and controller state. It keeps shared
+lanes ambiguous and never exposes vehicle routes, exact waits, or oracle ETAs.
+Its separate 32/8/8 map protocol freezes brand-new train, validation, and final
+test regions and checks the final split against the historical schema-v3 map
+plan before either training or evaluation can use it.
+
 ## Repository status
 
 - The cleaned schema-v3 source was merged at commit
@@ -47,6 +54,10 @@ Run the tests:
 
 Training, demand generation, evaluation, and monitoring instructions are in
 [docs/MAP_AGNOSTIC_TRAINING.md](docs/MAP_AGNOSTIC_TRAINING.md).
+
+Detector-realistic schema-v4 design, training, and paired-evaluation commands
+are in
+[docs/DETECTOR_REALISTIC_TRAINING.md](docs/DETECTOR_REALISTIC_TRAINING.md).
 
 Repository and experiment provenance are recorded in
 [docs/PROVENANCE.md](docs/PROVENANCE.md).

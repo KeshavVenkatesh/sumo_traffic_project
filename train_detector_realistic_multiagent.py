@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast parameter-sharing multi-agent PPO over persistent exact-SUMO maps."""
+"""Train detector-realistic schema v4 with parameter-sharing multi-agent PPO."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import sys
 import time
 from multiprocessing.connection import wait
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import gymnasium as gym
 import numpy as np
@@ -26,13 +26,14 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from sb3_contrib import MaskablePPO
 from torch.distributions import Categorical
 
-from map_agnostic_multiagent_worker import rollout_worker_main
-from map_agnostic_policy import (
-    MapAgnosticMaskablePolicy,
-    MovementGraphNetwork,
+from detector_realistic_multiagent_worker import rollout_worker_main
+from detector_realistic_policy import (
+    DetectorGraphNetwork,
+    DetectorRealisticMaskablePolicy,
 )
-from map_agnostic_tls import (
+from detector_realistic_tls import (
     GLOBAL_FEATURE_NAMES,
+    MAX_MOVEMENTS,
     MAX_PHASES,
     MOVEMENT_FEATURE_NAMES,
     PHASE_FEATURE_NAMES,
@@ -48,10 +49,10 @@ from validate_map_split_protocol import verify_training_protocol_lock
 
 
 ROOT = Path(__file__).resolve().parent
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
-class PolicyShapeEnv(gym.Env):
+class DetectorPolicyShapeEnv(gym.Env):
     metadata = {"render_modes": []}
 
     def __init__(self):
@@ -89,7 +90,7 @@ def trainer_checkpoint(path: str | Path) -> Path:
 def metadata_path(path: str | Path) -> Path:
     value = Path(path)
     base = value.with_suffix("") if value.suffix == ".zip" else value
-    return base.parent / f"{base.name}_map_agnostic.json"
+    return base.parent / f"{base.name}_detector_realistic.json"
 
 
 def load_demand_bank(
@@ -175,6 +176,21 @@ def audit_manifest_splits(
             "Validation is enabled but the manifest has no map in "
             f"--validation-splits={','.join(sorted(validation_splits))}."
         )
+    phase_records = [
+        (
+            str(record.get("name") or record.get("net_file") or record.get("path")),
+            str(record.get("split", "train")),
+            int(record.get("max_stable_phase_candidates", 0) or 0),
+        )
+        for record in records
+        if int(record.get("max_stable_phase_candidates", 0) or 0) > 0
+    ]
+    over_phase_cap = [record for record in phase_records if record[2] > MAX_PHASES]
+    if over_phase_cap:
+        raise RuntimeError(
+            f"Manifest contains TLS catalogs above detector MAX_PHASES={MAX_PHASES}: "
+            + json.dumps(over_phase_cap, sort_keys=True)
+        )
     print(
         "Manifest split audit: "
         + ", ".join(
@@ -184,6 +200,14 @@ def audit_manifest_splits(
         + " (no path/content leakage)",
         flush=True,
     )
+    if phase_records:
+        maximum_record = max(phase_records, key=lambda record: record[2])
+        print(
+            "Manifest detector phase-cap audit: "
+            f"maximum={maximum_record[2]} on {maximum_record[0]} "
+            f"({maximum_record[1]}), MAX_PHASES={MAX_PHASES}",
+            flush=True,
+        )
 
 
 def flatten_rollouts(rollouts: list[dict[str, Any]]) -> dict[str, np.ndarray]:
@@ -260,7 +284,7 @@ class SharedPPOTrainer:
     def __init__(self, args: argparse.Namespace, device: torch.device):
         self.args = args
         self.device = device
-        self.network = MovementGraphNetwork(
+        self.network = DetectorGraphNetwork(
             embed_dim=args.embed_dim,
             graph_layers=args.graph_layers,
         ).to(device)
@@ -304,6 +328,7 @@ class SharedPPOTrainer:
         self,
         rollouts: list[dict[str, Any]],
         total_planned_updates: int,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> dict[str, float]:
         batch = flatten_rollouts(rollouts)
         sample_count = len(batch["actions"])
@@ -336,6 +361,15 @@ class SharedPPOTrainer:
         }
         self.network.train()
         stop_early = False
+        optimizer_steps_total = self.args.ppo_epochs * math.ceil(
+            sample_count / self.args.minibatch_size
+        )
+        optimizer_steps_completed = 0
+        progress_interval = max(1, optimizer_steps_total // 100)
+        last_reported_step = -1
+        if progress_callback is not None:
+            progress_callback(0, optimizer_steps_total)
+            last_reported_step = 0
         for _epoch in range(self.args.ppo_epochs):
             np.random.shuffle(indices)
             for start in range(0, sample_count, self.args.minibatch_size):
@@ -482,6 +516,16 @@ class SharedPPOTrainer:
                 metric_totals["clip_fraction"] += float(clip_fraction.item())
                 metric_totals["teacher_loss"] += float(teacher_loss.item())
                 metric_totals["updates"] += 1.0
+                optimizer_steps_completed += 1
+                if progress_callback is not None and (
+                    optimizer_steps_completed == optimizer_steps_total
+                    or optimizer_steps_completed % progress_interval == 0
+                ):
+                    progress_callback(
+                        optimizer_steps_completed,
+                        optimizer_steps_total,
+                    )
+                    last_reported_step = optimizer_steps_completed
                 if (
                     self.args.target_kl > 0
                     and float(approx_kl.item()) > 1.5 * self.args.target_kl
@@ -490,6 +534,15 @@ class SharedPPOTrainer:
                     break
             if stop_early:
                 break
+
+        if (
+            progress_callback is not None
+            and last_reported_step != optimizer_steps_completed
+        ):
+            progress_callback(
+                optimizer_steps_completed,
+                optimizer_steps_total,
+            )
 
         self.completed_updates += 1
         denominator = max(1.0, metric_totals.pop("updates"))
@@ -563,9 +616,9 @@ def export_sb3_checkpoint(
     destination: str | Path | None = None,
 ) -> None:
     destination = destination or args.model_path
-    env = DummyVecEnv([PolicyShapeEnv])
+    env = DummyVecEnv([DetectorPolicyShapeEnv])
     model = MaskablePPO(
-        policy=MapAgnosticMaskablePolicy,
+        policy=DetectorRealisticMaskablePolicy,
         env=env,
         n_steps=8,
         batch_size=8,
@@ -584,8 +637,10 @@ def export_sb3_checkpoint(
 
     payload = {
         "schema_version": SCHEMA_VERSION,
-        "policy_class": "map_agnostic_policy.MapAgnosticMaskablePolicy",
-        "trainer": "parameter_sharing_multiagent_ppo",
+        "policy_class": (
+            "detector_realistic_policy.DetectorRealisticMaskablePolicy"
+        ),
+        "trainer": "detector_realistic_parameter_sharing_multiagent_ppo",
         "analytical_observation_normalization": True,
         "vecnormalize_required": False,
         "movement_features": list(MOVEMENT_FEATURE_NAMES),
@@ -593,7 +648,22 @@ def export_sb3_checkpoint(
         "global_features": list(GLOBAL_FEATURE_NAMES),
         "embed_dim": args.embed_dim,
         "graph_layers": args.graph_layers,
+        "max_movements": MAX_MOVEMENTS,
+        "max_phases": MAX_PHASES,
         "decision_seconds": args.decision_seconds,
+        "sensor_profile": args.sensor_profile,
+        "stopbar_zone_meters": args.stopbar_zone_meters,
+        "advance_distance_meters": args.advance_distance_meters,
+        "advance_zone_meters": args.advance_zone_meters,
+        "downstream_zone_meters": args.downstream_zone_meters,
+        "detector_history_seconds": args.detector_history_seconds,
+        "detector_noise_std": args.detector_noise_std,
+        "detector_calibration_jitter": args.detector_calibration_jitter,
+        "detector_dropout_prob": args.detector_dropout_prob,
+        "detector_stuck_prob": args.detector_stuck_prob,
+        "max_detector_latency_decisions": args.max_detector_latency_decisions,
+        "mixed_speed_probability": args.mixed_speed_probability,
+        "mixed_downstream_probability": args.mixed_downstream_probability,
         "agent_transitions": trainer.agent_transitions,
         "completed_updates": trainer.completed_updates,
     }
@@ -621,9 +691,25 @@ def worker_config(
         ),
         "max_vehicle_center": args.max_vehicle_center,
         "spawn_batch_center": args.spawn_batch_center,
-        "observation_noise_std": args.observation_noise_std,
-        "sensor_scale_jitter": args.sensor_scale_jitter,
-        "sensor_dropout_prob": args.sensor_dropout_prob,
+        # The v3 post-processing augmentor is disabled in the v4 worker.  The
+        # fields remain present because the shared persistent episode expects
+        # them while constructing its exact-SUMO base.
+        "observation_noise_std": 0.0,
+        "sensor_scale_jitter": 0.0,
+        "sensor_dropout_prob": 0.0,
+        "sensor_profile": args.sensor_profile,
+        "stopbar_zone_meters": args.stopbar_zone_meters,
+        "advance_distance_meters": args.advance_distance_meters,
+        "advance_zone_meters": args.advance_zone_meters,
+        "downstream_zone_meters": args.downstream_zone_meters,
+        "detector_history_seconds": args.detector_history_seconds,
+        "detector_noise_std": args.detector_noise_std,
+        "detector_calibration_jitter": args.detector_calibration_jitter,
+        "detector_dropout_prob": args.detector_dropout_prob,
+        "detector_stuck_prob": args.detector_stuck_prob,
+        "max_detector_latency_decisions": args.max_detector_latency_decisions,
+        "mixed_speed_probability": args.mixed_speed_probability,
+        "mixed_downstream_probability": args.mixed_downstream_probability,
         "embed_dim": args.embed_dim,
         "graph_layers": args.graph_layers,
         "demand_routes": demand_bank.get(str(net_file.resolve()), []),
@@ -803,7 +889,7 @@ def validation_command(args: argparse.Namespace, round_index: int) -> dict[str, 
     command = [
         sys.executable,
         "-u",
-        str(ROOT / "validate_map_agnostic_multiagent.py"),
+        str(ROOT / "validate_detector_realistic_multiagent.py"),
         "--manifest",
         str(args.manifest),
         "--splits",
@@ -828,6 +914,32 @@ def validation_command(args: argparse.Namespace, round_index: int) -> dict[str, 
         args.device,
         "--workers",
         str(args.validation_workers),
+        "--sensor-profile",
+        args.sensor_profile,
+        "--stopbar-zone-meters",
+        str(args.stopbar_zone_meters),
+        "--advance-distance-meters",
+        str(args.advance_distance_meters),
+        "--advance-zone-meters",
+        str(args.advance_zone_meters),
+        "--downstream-zone-meters",
+        str(args.downstream_zone_meters),
+        "--detector-history-seconds",
+        str(args.detector_history_seconds),
+        "--detector-noise-std",
+        "0.0",
+        "--detector-calibration-jitter",
+        "0.0",
+        "--detector-dropout-prob",
+        "0.0",
+        "--detector-stuck-prob",
+        "0.0",
+        "--max-detector-latency-decisions",
+        "0",
+        "--mixed-speed-probability",
+        str(args.mixed_speed_probability),
+        "--mixed-downstream-probability",
+        str(args.mixed_downstream_probability),
     ]
     result = subprocess.run(
         command,
@@ -838,7 +950,7 @@ def validation_command(args: argparse.Namespace, round_index: int) -> dict[str, 
         stderr=subprocess.STDOUT,
     )
     print(result.stdout, end="")
-    marker = "MAP_AGNOSTIC_VALIDATION_JSON="
+    marker = "DETECTOR_REALISTIC_VALIDATION_JSON="
     line = next(
         (value for value in reversed(result.stdout.splitlines()) if value.startswith(marker)),
         None,
@@ -882,7 +994,9 @@ def parse_args() -> argparse.Namespace:
         help="Optional comma-separated .net.xml files in addition to the manifest.",
     )
     parser.add_argument("--splits", default="train")
-    parser.add_argument("--model-path", default="models/map_agnostic_multiagent_v3")
+    parser.add_argument(
+        "--model-path", default="models/detector_realistic_multiagent_v4"
+    )
     parser.add_argument("--best-model-path", default="")
     parser.add_argument("--demand-bank-manifest", default="")
     parser.add_argument("--rounds", type=int, default=4)
@@ -899,15 +1013,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--progress-file",
         type=Path,
-        default=Path("map_agnostic_multiagent_progress.json"),
+        default=Path("detector_realistic_multiagent_progress.json"),
     )
 
     parser.add_argument("--max-vehicle-center", type=int, default=1500)
     parser.add_argument("--target-density-range", default="2,10")
     parser.add_argument("--spawn-batch-center", type=int, default=20)
-    parser.add_argument("--observation-noise-std", type=float, default=0.01)
-    parser.add_argument("--sensor-scale-jitter", type=float, default=0.05)
-    parser.add_argument("--sensor-dropout-prob", type=float, default=0.01)
+    parser.add_argument(
+        "--sensor-profile",
+        choices=("loops", "camera", "mixed"),
+        default="mixed",
+        help="Physical detector capabilities exposed to the policy.",
+    )
+    parser.add_argument("--stopbar-zone-meters", type=float, default=12.0)
+    parser.add_argument("--advance-distance-meters", type=float, default=80.0)
+    parser.add_argument("--advance-zone-meters", type=float, default=10.0)
+    parser.add_argument("--downstream-zone-meters", type=float, default=30.0)
+    parser.add_argument("--detector-history-seconds", type=float, default=60.0)
+    parser.add_argument("--detector-noise-std", type=float, default=0.02)
+    parser.add_argument("--detector-calibration-jitter", type=float, default=0.05)
+    parser.add_argument("--detector-dropout-prob", type=float, default=0.03)
+    parser.add_argument("--detector-stuck-prob", type=float, default=0.01)
+    parser.add_argument("--max-detector-latency-decisions", type=int, default=1)
+    parser.add_argument("--mixed-speed-probability", type=float, default=0.50)
+    parser.add_argument("--mixed-downstream-probability", type=float, default=0.35)
 
     parser.add_argument("--embed-dim", type=int, default=128)
     parser.add_argument("--graph-layers", type=int, default=2)
@@ -951,7 +1080,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--validation-dir",
         type=Path,
-        default=Path("runs/map_agnostic_multiagent_validation"),
+        default=Path("runs/detector_realistic_multiagent_validation"),
     )
     args = parser.parse_args()
     args.splits = set(parse_csv(args.splits))
@@ -979,6 +1108,30 @@ def parse_args() -> argparse.Namespace:
             parser.error(f"--{field.replace('_', '-')} must be positive")
     if args.decision_seconds <= 0:
         parser.error("--decision-seconds must be positive")
+    positive_detector_fields = (
+        "stopbar_zone_meters",
+        "advance_distance_meters",
+        "advance_zone_meters",
+        "downstream_zone_meters",
+        "detector_history_seconds",
+    )
+    if any(float(getattr(args, field)) <= 0.0 for field in positive_detector_fields):
+        parser.error("Detector distances and history must be positive")
+    detector_probabilities = (
+        "detector_dropout_prob",
+        "detector_stuck_prob",
+        "mixed_speed_probability",
+        "mixed_downstream_probability",
+    )
+    if any(
+        not 0.0 <= float(getattr(args, field)) <= 1.0
+        for field in detector_probabilities
+    ):
+        parser.error("Detector probabilities must be in [0, 1]")
+    if args.detector_noise_std < 0.0 or args.detector_calibration_jitter < 0.0:
+        parser.error("Detector noise and calibration jitter must be nonnegative")
+    if args.max_detector_latency_decisions < 0:
+        parser.error("--max-detector-latency-decisions must be nonnegative")
     if args.teacher_coef < 0 or args.teacher_decay_fraction <= 0:
         parser.error(
             "--teacher-coef must be nonnegative and "
@@ -1040,6 +1193,21 @@ def main() -> None:
         "seed": args.seed,
         "embed_dim": args.embed_dim,
         "graph_layers": args.graph_layers,
+        "max_movements": MAX_MOVEMENTS,
+        "max_phases": MAX_PHASES,
+        "sensor_profile": args.sensor_profile,
+        "stopbar_zone_meters": args.stopbar_zone_meters,
+        "advance_distance_meters": args.advance_distance_meters,
+        "advance_zone_meters": args.advance_zone_meters,
+        "downstream_zone_meters": args.downstream_zone_meters,
+        "detector_history_seconds": args.detector_history_seconds,
+        "detector_noise_std": args.detector_noise_std,
+        "detector_calibration_jitter": args.detector_calibration_jitter,
+        "detector_dropout_prob": args.detector_dropout_prob,
+        "detector_stuck_prob": args.detector_stuck_prob,
+        "max_detector_latency_decisions": args.max_detector_latency_decisions,
+        "mixed_speed_probability": args.mixed_speed_probability,
+        "mixed_downstream_probability": args.mixed_downstream_probability,
         "split_protocol_lock": args.verified_split_protocol,
     }
     args.plan_signature = hashlib.sha256(
@@ -1064,8 +1232,17 @@ def main() -> None:
     print(f"  planned PPO updates:     {total_updates}")
     print(f"  decision interval:       {args.decision_seconds:g}s")
     print(f"  episode duration:        {args.episode_seconds}s")
+    print(f"  sensor profile:          {args.sensor_profile}")
+    print(
+        "  detector corruption:     "
+        f"noise={args.detector_noise_std:g}, "
+        f"dropout={args.detector_dropout_prob:g}, "
+        f"stuck={args.detector_stuck_prob:g}, "
+        f"latency<= {args.max_detector_latency_decisions} decisions"
+    )
     print("  transition source:       every usable TLS in every map worker")
     print("  map weighting:           equal map weight; balanced topology buckets")
+    print(f"  learner CPU threads:     {torch.get_num_threads()}")
     print(f"  model:                   {model_zip(args.model_path)}")
 
     if trainer.completed_updates >= total_updates and (
@@ -1138,8 +1315,70 @@ def main() -> None:
                         collection_metrics = [
                             rollout["metrics"] for rollout in rollouts
                         ]
+                        optimization_samples = sum(
+                            int(np.asarray(rollout["actions"]).size)
+                            for rollout in rollouts
+                        )
+                        optimization_start_wall = time.monotonic()
+                        last_optimization_bucket = [-1]
+
+                        def report_optimization_progress(
+                            completed_steps: int,
+                            total_steps: int,
+                        ) -> None:
+                            fraction = completed_steps / max(1, total_steps)
+                            elapsed = time.monotonic() - optimization_start_wall
+                            remaining = (
+                                elapsed
+                                * (total_steps - completed_steps)
+                                / completed_steps
+                                if completed_steps > 0
+                                else None
+                            )
+                            bucket = int(10.0 * fraction)
+                            if (
+                                completed_steps == 0
+                                or completed_steps == total_steps
+                                or bucket > last_optimization_bucket[0]
+                            ):
+                                print(
+                                    f"[optimize] {100.0 * fraction:5.1f}% "
+                                    f"({completed_steps}/{total_steps} minibatches, "
+                                    f"samples={optimization_samples}, "
+                                    f"threads={torch.get_num_threads()})",
+                                    flush=True,
+                                )
+                                last_optimization_bucket[0] = bucket
+                            extra = {
+                                "round": round_index + 1,
+                                "wave": wave_index + 1,
+                                "visit": visit + 1,
+                                "overall_percent": 100.0
+                                * (trainer.completed_updates + fraction)
+                                / max(1, total_updates),
+                                "optimization_samples": optimization_samples,
+                                "optimization_steps_completed": completed_steps,
+                                "optimization_steps_total": total_steps,
+                                "optimization_percent": 100.0 * fraction,
+                                "optimization_elapsed_seconds": elapsed,
+                            }
+                            if remaining is not None:
+                                extra[
+                                    "optimization_estimated_seconds_remaining"
+                                ] = remaining
+                            write_progress(
+                                args,
+                                trainer,
+                                total_updates,
+                                {},
+                                status="optimizing",
+                                extra=extra,
+                            )
+
                         update_metrics = trainer.update(
-                            rollouts, total_updates
+                            rollouts,
+                            total_updates,
+                            progress_callback=report_optimization_progress,
                         )
                         trainer.save_trainer(args)
                         export_sb3_checkpoint(trainer, args)
