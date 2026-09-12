@@ -1,0 +1,11 @@
+{
+  "source_campaign": "/users/sriramv/sumo_traffic_project/runs/detector_v4_extensive_test_fast/heldout/loops",
+  "controllers": [
+    "native_sumo",
+    "max_pressure",
+    "schema_v3"
+  ],
+  "rows": 2160,
+  "reason": "These controllers do not read detector sensor-profile or fault settings.",
+  "route_paths_rewritten_to_target_hardlinks": true
+}

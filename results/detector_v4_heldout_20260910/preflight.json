@@ -1,0 +1,38 @@
+{
+  "source_commit": "e02bb46eb4911fafb04c03c2b772bfd41a133ef6",
+  "identity": {
+    "models/detector_realistic_multiagent_v4_best.zip": "f8e9d5d344e8737fc84a3c6fea37526bcf56df8bc3d2cf249ef75faf9016811b",
+    "models/detector_realistic_multiagent_v4.zip": "d2aee142e31731f80960df7eeaa0e44b95a5c7cf9dc2f05f0322a41e60a3457a",
+    "models/map_agnostic_multiagent_v3_best.zip": "be832797883d589441fd27d52b87884320a624af024eab0dac4ed8d9860f0706",
+    "models/detector_realistic_multiagent_v4_best_detector_realistic.json": "f69d6e03d04327cb37ab6f4bf78b3ab77c83cd1297ca17ad2e0e1b7d3f30207f",
+    "models/map_agnostic_multiagent_v3_best_map_agnostic.json": "c9771772b64a4bc4043a8870865a46871ce9bf3594d3160f3093908169369458",
+    "generated_map_corpus_v4/manifest.json": "ca2f1814da3f25245af8fc369d1003f78a78e106effcf68e638e835e19683bb7",
+    "generated_map_corpus_v4/split_protocol_lock.json": "cac6fa4339cf1a723d5aa393e08c65644595a21e66364aba8f501c3ffafb0488"
+  },
+  "versions": {
+    "sumo": "Eclipse SUMO sumo 1.26.0",
+    "netconvert": "Eclipse SUMO netconvert 1.26.0",
+    "duarouter": "Eclipse SUMO duarouter 1.26.0",
+    "libsumo": "1.26.0",
+    "traci": "1.26.0",
+    "sumolib": "1.26.0",
+    "sumo-data": "1.26.0"
+  },
+  "python": "3.10.12 (main, Jul 15 2026, 23:40:17) [GCC 11.4.0]",
+  "platform": "Linux-5.15.0-187-generic-x86_64-with-glibc2.35",
+  "torch": "2.13.0+cpu",
+  "cpu_available": 16,
+  "ram_available_gib": 57.52521896362305,
+  "test_maps": [
+    "melbourne",
+    "mexico_city",
+    "montreal",
+    "new_york",
+    "singapore",
+    "sydney",
+    "tokyo",
+    "toronto"
+  ],
+  "time": 1789005258.248985,
+  "passed": true
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Display live update, rollout, throughput, and ETA for v3 training."""
+"""Display live collection, optimization, throughput, and ETA."""
 
 from __future__ import annotations
 
@@ -28,6 +28,34 @@ def render(path: Path) -> bool:
         print("Active rollouts:")
         for name, fraction in sorted(active.items()):
             print(f"  {name:<32} {100.0 * float(fraction):6.2f}%")
+    if status == "optimizing":
+        optimization_completed = int(
+            payload.get("optimization_steps_completed", 0)
+        )
+        optimization_total = int(payload.get("optimization_steps_total", 0))
+        optimization_percent = float(payload.get("optimization_percent", 0.0))
+        optimization_samples = int(payload.get("optimization_samples", 0))
+        elapsed = max(
+            0.0,
+            float(payload.get("optimization_elapsed_seconds", 0.0)),
+        )
+        print(
+            "Optimization: "
+            f"{optimization_percent:6.2f}% "
+            f"({optimization_completed}/{optimization_total} minibatches, "
+            f"{optimization_samples:,} samples, {elapsed:.1f}s elapsed)"
+        )
+        optimization_eta = payload.get(
+            "optimization_estimated_seconds_remaining"
+        )
+        if optimization_eta is not None:
+            optimization_eta = max(0.0, float(optimization_eta))
+            hours, remainder = divmod(int(optimization_eta), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            print(
+                "Optimization ETA: "
+                f"{hours:d}h {minutes:02d}m {seconds:02d}s"
+            )
     metrics = payload.get("last_collection_metrics", [])
     if metrics:
         transitions_last = sum(int(item.get("transitions", 0)) for item in metrics)

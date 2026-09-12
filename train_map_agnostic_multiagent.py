@@ -44,6 +44,7 @@ from train_map_agnostic_multimap import (
     parse_csv,
     passenger_lane_km,
 )
+from validate_map_split_protocol import verify_training_protocol_lock
 
 
 ROOT = Path(__file__).resolve().parent
@@ -868,6 +869,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True)
     parser.add_argument(
+        "--split-protocol-lock",
+        default="",
+        help=(
+            "Post-generation lock from validate_map_split_protocol.py. When "
+            "set, training is restricted to its exact train split."
+        ),
+    )
+    parser.add_argument(
         "--maps",
         default="",
         help="Optional comma-separated .net.xml files in addition to the manifest.",
@@ -995,6 +1004,11 @@ def main() -> None:
         require_validation=args.validate_every_round,
         validation_splits=set(parse_csv(args.validation_splits)),
     )
+    args.verified_split_protocol = verify_training_protocol_lock(
+        args.split_protocol_lock,
+        args.manifest,
+        args.splits,
+    )
     maps = load_maps(args)
     demand_bank = load_demand_bank(
         args.demand_bank_manifest,
@@ -1026,6 +1040,7 @@ def main() -> None:
         "seed": args.seed,
         "embed_dim": args.embed_dim,
         "graph_layers": args.graph_layers,
+        "split_protocol_lock": args.verified_split_protocol,
     }
     args.plan_signature = hashlib.sha256(
         json.dumps(plan_payload, sort_keys=True).encode("utf-8")

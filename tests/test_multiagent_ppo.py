@@ -9,9 +9,15 @@ import numpy as np
 try:
     import torch
 
+    from detector_realistic_tls import (
+        MAX_PHASES as DETECTOR_MAX_PHASES,
+        empty_observation as detector_empty_observation,
+    )
     from map_agnostic_multiagent_worker import normalized_max_pressure_actions
-    from map_agnostic_tls import MAX_PHASES, empty_observation
-    from train_map_agnostic_multiagent import SharedPPOTrainer, flatten_rollouts
+    from train_detector_realistic_multiagent import (
+        SharedPPOTrainer,
+        flatten_rollouts,
+    )
 
     HAS_RL = True
 except ImportError:
@@ -23,7 +29,7 @@ class MultiAgentPPOTests(unittest.TestCase):
     def observations(self):
         result = []
         for index in range(2):
-            observation = empty_observation()
+            observation = detector_empty_observation()
             observation["movement_mask"][:2] = 1.0
             observation["phase_membership"][0, 0] = 1.0
             observation["phase_membership"][1, 1] = 1.0
@@ -53,7 +59,7 @@ class MultiAgentPPOTests(unittest.TestCase):
             )
         }
         action_masks = np.zeros(
-            (time_steps, agents, MAX_PHASES + 1), dtype=np.uint8
+            (time_steps, agents, DETECTOR_MAX_PHASES + 1), dtype=np.uint8
         )
         action_masks[..., :3] = 1
         return {
@@ -75,11 +81,21 @@ class MultiAgentPPOTests(unittest.TestCase):
 
     def test_teacher_never_selects_a_masked_action(self):
         observations = self.observations()
-        masks = np.zeros((2, MAX_PHASES + 1), dtype=bool)
+        masks = np.zeros((2, DETECTOR_MAX_PHASES + 1), dtype=bool)
         masks[0, [0, 1]] = True
         masks[1, [0, 2]] = True
         actions = normalized_max_pressure_actions(observations, masks)
         self.assertTrue(all(masks[i, action] for i, action in enumerate(actions)))
+
+    def test_teacher_uses_detector_observation_phase_capacity(self):
+        observation = detector_empty_observation()
+        observation["phase_features"][16, 3] = 1.0
+        masks = np.zeros((1, DETECTOR_MAX_PHASES + 1), dtype=bool)
+        masks[0, [0, 17]] = True
+
+        actions = normalized_max_pressure_actions([observation], masks)
+
+        self.assertEqual(actions.tolist(), [17])
 
     def test_flatten_and_weighted_ppo_update(self):
         rollout = self.rollout()
@@ -105,9 +121,18 @@ class MultiAgentPPOTests(unittest.TestCase):
             target_kl=0.0,
         )
         trainer = SharedPPOTrainer(args, torch.device("cpu"))
-        metrics = trainer.update([rollout], total_planned_updates=4)
+        optimization_progress = []
+        metrics = trainer.update(
+            [rollout],
+            total_planned_updates=4,
+            progress_callback=lambda completed, total: (
+                optimization_progress.append((completed, total))
+            ),
+        )
         self.assertEqual(trainer.completed_updates, 1)
         self.assertEqual(trainer.agent_transitions, 6)
+        self.assertEqual(optimization_progress[0], (0, 2))
+        self.assertEqual(optimization_progress[-1], (2, 2))
         self.assertTrue(all(math.isfinite(float(value)) for value in metrics.values()))
 
 

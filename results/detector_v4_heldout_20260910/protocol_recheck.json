@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "status": "valid",
+  "corpus_id": "detector_realistic_v4_new_maps_20260817",
+  "new_corpus": {
+    "config": "/users/sriramv/sumo_traffic_project/map_corpus_regions_v4.json",
+    "config_sha256": "5e5f14c460fcd3f98d0096511136e7cb53bcb1ab97cf1a1089516833e1235688",
+    "seed": 20260817,
+    "split_counts": {
+      "train": 32,
+      "validation": 8,
+      "test": 8
+    },
+    "train_maps": [
+      "los_angeles_1",
+      "los_angeles_2",
+      "long_beach",
+      "riverside",
+      "san_antonio",
+      "dallas",
+      "houston_1",
+      "houston_2",
+      "new_orleans",
+      "miami",
+      "orlando",
+      "tampa",
+      "nashville",
+      "raleigh",
+      "washington_dc",
+      "baltimore",
+      "philadelphia_1",
+      "philadelphia_2",
+      "pittsburgh",
+      "cleveland",
+      "detroit",
+      "columbus",
+      "indianapolis",
+      "milwaukee",
+      "st_louis",
+      "kansas_city",
+      "omaha",
+      "albuquerque",
+      "tucson",
+      "london_1",
+      "london_2",
+      "madrid"
+    ],
+    "validation_maps": [
+      "lisbon",
+      "rome",
+      "milan",
+      "berlin",
+      "amsterdam",
+      "brussels",
+      "vienna",
+      "prague"
+    ],
+    "final_test_maps": [
+      "new_york",
+      "toronto",
+      "montreal",
+      "mexico_city",
+      "tokyo",
+      "singapore",
+      "sydney",
+      "melbourne"
+    ]
+  },
+  "historical_exclusion": {
+    "config": "/users/sriramv/sumo_traffic_project/map_corpus_regions.json",
+    "config_sha256": "95870323d2c1645aba90c44f5b7c47bf6f898426600ebf84e1a8267cbdf9cd8f",
+    "seed": 20260712,
+    "excluded_map_count": 30,
+    "excluded_maps": [
+      "oakland_1",
+      "oakland_2",
+      "berkeley",
+      "hayward",
+      "san_mateo",
+      "palo_alto",
+      "mountain_view",
+      "sunnyvale",
+      "san_jose_1",
+      "san_jose_2",
+      "portland",
+      "phoenix",
+      "denver",
+      "austin",
+      "atlanta",
+      "boston_1",
+      "boston_2",
+      "seattle",
+      "chicago",
+      "charlotte",
+      "barcelona_1",
+      "barcelona_2",
+      "paris",
+      "sacramento",
+      "las_vegas",
+      "salt_lake_city",
+      "minneapolis",
+      "valencia",
+      "fresno",
+      "san_diego"
+    ]
+  },
+  "checks": {
+    "region_names_disjoint": true,
+    "cross_split_bounding_boxes_disjoint": true,
+    "minimum_required_test_center_distance_km": 75.0,
+    "minimum_observed_test_center_distance_km": 129.365,
+    "closest_test_exclusion_pair": {
+      "test_map": "new_york",
+      "excluded_source": "new development",
+      "excluded_map": "philadelphia_1",
+      "center_distance_km": 129.365
+    }
+  },
+  "generated_manifest": {
+    "path": "/users/sriramv/sumo_traffic_project/generated_map_corpus_v4/manifest.json",
+    "sha256": "ca2f1814da3f25245af8fc369d1003f78a78e106effcf68e638e835e19683bb7",
+    "accepted_split_counts": {
+      "train": 32,
+      "validation": 8,
+      "test": 8
+    }
+  },
+  "final_test_policy": "The test split is frozen before training and is excluded from both schema-v4 development and every region in the historical schema-v3 corpus plan."
+}

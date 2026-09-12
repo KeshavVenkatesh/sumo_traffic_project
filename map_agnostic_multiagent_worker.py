@@ -22,7 +22,6 @@ from map_agnostic_tls import (
     DEFAULT_MIN_GREEN,
     GLOBAL_FEATURE_DIM,
     MAX_MOVEMENTS,
-    MAX_PHASES,
     MOVEMENT_FEATURE_DIM,
     PHASE_FEATURE_DIM,
     MapTrafficSnapshot,
@@ -446,14 +445,20 @@ def normalized_max_pressure_actions(
         + 0.80 * phase[..., 5]
         + 0.20 * phase[..., 7]
     )
-    scores = np.full(
-        (len(observations), MAX_PHASES + 1), -1e9, dtype=np.float32
-    )
+    mask_array = np.asarray(masks, dtype=bool)
+    expected_shape = (phase.shape[0], phase.shape[1] + 1)
+    if mask_array.shape != expected_shape:
+        raise ValueError(
+            "Teacher action-mask shape "
+            f"{mask_array.shape} does not match observation-derived action "
+            f"shape {expected_shape}."
+        )
+    scores = np.full(expected_shape, -1e9, dtype=np.float32)
     scores[:, 1:] = phase_scores
     scores[:, 0] = (phase_scores * phase[..., 0]).sum(axis=1) + 0.15 * (
         1.0 - global_features[:, 1]
     )
-    scores[~np.asarray(masks, dtype=bool)] = -1e9
+    scores[~mask_array] = -1e9
     return np.argmax(scores, axis=1).astype(np.int64)
 
 

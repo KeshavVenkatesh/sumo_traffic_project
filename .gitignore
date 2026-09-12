@@ -35,8 +35,10 @@ wandb/
 events.out.tfevents.*
 
 # Generated maps, demand, and caches
-generated_map_corpus/
+generated_map_corpus*/
 training_demand_bank*/
+*_split_preflight.json
+*_split_protocol_lock.json
 .cache/
 .route_cache/
 *.osm

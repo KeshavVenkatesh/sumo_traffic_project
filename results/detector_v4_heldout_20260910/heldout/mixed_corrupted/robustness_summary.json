@@ -1,0 +1,148 @@
+{
+  "conditions": 24,
+  "fairness_passed": true,
+  "fairness_issues": [],
+  "learned_vs_native_robustness": {
+    "total_arrived": {
+      "conditions": 24,
+      "clear_positive_conditions": 12,
+      "clear_negative_conditions": 9,
+      "holm_clear_positive_conditions": 11,
+      "inconclusive_conditions": 3,
+      "worst_condition": {
+        "map": "singapore",
+        "rate": "6p0",
+        "improvement_pct": -14.083145343216252
+      },
+      "median_condition_improvement_pct": 0.9875516671048328
+    },
+    "mean_avg_speed_mps": {
+      "conditions": 24,
+      "clear_positive_conditions": 11,
+      "clear_negative_conditions": 6,
+      "holm_clear_positive_conditions": 11,
+      "inconclusive_conditions": 7,
+      "worst_condition": {
+        "map": "singapore",
+        "rate": "6p0",
+        "improvement_pct": -14.121959505951603
+      },
+      "median_condition_improvement_pct": 0.6410063010077544
+    },
+    "mean_global_queue": {
+      "conditions": 24,
+      "clear_positive_conditions": 16,
+      "clear_negative_conditions": 5,
+      "holm_clear_positive_conditions": 12,
+      "inconclusive_conditions": 3,
+      "worst_condition": {
+        "map": "singapore",
+        "rate": "6p0",
+        "improvement_pct": -27.112839356426807
+      },
+      "median_condition_improvement_pct": 5.588441222627278
+    },
+    "max_global_queue": {
+      "conditions": 24,
+      "clear_positive_conditions": 21,
+      "clear_negative_conditions": 2,
+      "holm_clear_positive_conditions": 21,
+      "inconclusive_conditions": 1,
+      "worst_condition": {
+        "map": "singapore",
+        "rate": "6p0",
+        "improvement_pct": -31.897555296856808
+      },
+      "median_condition_improvement_pct": 21.034688398799148
+    },
+    "mean_global_wait": {
+      "conditions": 24,
+      "clear_positive_conditions": 6,
+      "clear_negative_conditions": 17,
+      "holm_clear_positive_conditions": 6,
+      "inconclusive_conditions": 1,
+      "worst_condition": {
+        "map": "melbourne",
+        "rate": "6p0",
+        "improvement_pct": -216.5769586233239
+      },
+      "median_condition_improvement_pct": -36.32395660798865
+    },
+    "max_global_wait": {
+      "conditions": 24,
+      "clear_positive_conditions": 9,
+      "clear_negative_conditions": 14,
+      "holm_clear_positive_conditions": 9,
+      "inconclusive_conditions": 1,
+      "worst_condition": {
+        "map": "melbourne",
+        "rate": "6p0",
+        "improvement_pct": -128.4752234139302
+      },
+      "median_condition_improvement_pct": -25.668739884776613
+    },
+    "recovered_total": {
+      "conditions": 24,
+      "clear_positive_conditions": 21,
+      "clear_negative_conditions": 2,
+      "holm_clear_positive_conditions": 21,
+      "inconclusive_conditions": 1,
+      "worst_condition": {
+        "map": "singapore",
+        "rate": "18p0",
+        "improvement_pct": -36.01997146932953
+      },
+      "median_condition_improvement_pct": 42.245978247902954
+    }
+  },
+  "runtime_and_policy_safety": {
+    "all_model": {
+      "runs": 720,
+      "mean_wall_seconds": 105.33443418611112,
+      "median_wall_seconds": 104.86121299999999,
+      "p95_wall_seconds": 186.658461,
+      "policy_decisions": 15390000,
+      "policy_switch_rate": 0.48467394411955816,
+      "policy_forced_switch_rate": 0.0,
+      "policy_invalid_action_rate": 0.0,
+      "mean_tls_spillback": 0.0,
+      "mean_tls_starvation": 0.0
+    },
+    "max_pressure": {
+      "runs": 720,
+      "mean_wall_seconds": 76.73062443055557,
+      "median_wall_seconds": 72.387956,
+      "p95_wall_seconds": 143.891185,
+      "policy_decisions": 15390000,
+      "policy_switch_rate": 0.4914427550357375,
+      "policy_forced_switch_rate": 0.0,
+      "policy_invalid_action_rate": 0.0,
+      "mean_tls_spillback": 0.002929418142134246,
+      "mean_tls_starvation": 0.2724608810443259
+    },
+    "native_sumo": {
+      "runs": 720,
+      "mean_wall_seconds": 83.08610931666666,
+      "median_wall_seconds": 76.05856750000001,
+      "p95_wall_seconds": 171.0072,
+      "policy_decisions": 0,
+      "policy_switch_rate": 0.0,
+      "policy_forced_switch_rate": 0.0,
+      "policy_invalid_action_rate": 0.0,
+      "mean_tls_spillback": NaN,
+      "mean_tls_starvation": NaN
+    },
+    "schema_v3": {
+      "runs": 720,
+      "mean_wall_seconds": 96.50559310555556,
+      "median_wall_seconds": 94.56295800000001,
+      "p95_wall_seconds": 176.171158,
+      "policy_decisions": 15390000,
+      "policy_switch_rate": 0.48738070175438597,
+      "policy_forced_switch_rate": 0.0,
+      "policy_invalid_action_rate": 0.0,
+      "mean_tls_spillback": 0.002915938041555871,
+      "mean_tls_starvation": 0.26336276615234405
+    }
+  }
+}

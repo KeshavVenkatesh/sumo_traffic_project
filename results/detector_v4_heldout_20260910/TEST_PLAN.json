@@ -1,0 +1,130 @@
+{
+  "protocol_version": 2,
+  "source_commit": "e02bb46eb4911fafb04c03c2b772bfd41a133ef6",
+  "identity": {
+    "models/detector_realistic_multiagent_v4_best.zip": "f8e9d5d344e8737fc84a3c6fea37526bcf56df8bc3d2cf249ef75faf9016811b",
+    "models/detector_realistic_multiagent_v4.zip": "d2aee142e31731f80960df7eeaa0e44b95a5c7cf9dc2f05f0322a41e60a3457a",
+    "models/map_agnostic_multiagent_v3_best.zip": "be832797883d589441fd27d52b87884320a624af024eab0dac4ed8d9860f0706",
+    "models/detector_realistic_multiagent_v4_best_detector_realistic.json": "f69d6e03d04327cb37ab6f4bf78b3ab77c83cd1297ca17ad2e0e1b7d3f30207f",
+    "models/map_agnostic_multiagent_v3_best_map_agnostic.json": "c9771772b64a4bc4043a8870865a46871ce9bf3594d3160f3093908169369458",
+    "generated_map_corpus_v4/manifest.json": "ca2f1814da3f25245af8fc369d1003f78a78e106effcf68e638e835e19683bb7",
+    "generated_map_corpus_v4/split_protocol_lock.json": "cac6fa4339cf1a723d5aa393e08c65644595a21e66364aba8f501c3ffafb0488"
+  },
+  "runner_sha256": "752ef18ead5bce272dd5d55be08c6732f32f5fa0efd813b05af94ecb3141adcb",
+  "sensor_conditions": [
+    {
+      "name": "loops",
+      "sensor_profile": "loops"
+    },
+    {
+      "name": "camera",
+      "sensor_profile": "camera"
+    },
+    {
+      "name": "mixed",
+      "sensor_profile": "mixed"
+    },
+    {
+      "name": "mixed_corrupted",
+      "sensor_profile": "mixed",
+      "detector_noise_std": 0.03,
+      "detector_calibration_jitter": 0.05,
+      "detector_dropout_prob": 0.05,
+      "detector_stuck_prob": 0.02,
+      "max_detector_latency_decisions": 2
+    }
+  ],
+  "controllers": [
+    "native_sumo",
+    "max_pressure",
+    "all_model",
+    "schema_v3"
+  ],
+  "rates": [
+    6,
+    12,
+    18
+  ],
+  "seeds": [
+    1001,
+    1002,
+    1003,
+    1004,
+    1005,
+    1006,
+    1007,
+    1008,
+    1009,
+    1010,
+    1011,
+    1012,
+    1013,
+    1014,
+    1015,
+    1016,
+    1017,
+    1018,
+    1019,
+    1020,
+    1021,
+    1022,
+    1023,
+    1024,
+    1025,
+    1026,
+    1027,
+    1028,
+    1029,
+    1030
+  ],
+  "episode_seconds": 1200,
+  "metrics_interval": 20,
+  "decision_seconds": 10,
+  "max_vehicles": 3000,
+  "test_maps": [
+    "melbourne",
+    "mexico_city",
+    "montreal",
+    "new_york",
+    "singapore",
+    "sydney",
+    "tokyo",
+    "toronto"
+  ],
+  "smoke_map": {
+    "name": "amsterdam",
+    "split": "validation",
+    "bbox": [
+      52.3490342,
+      4.9010256,
+      52.3761511,
+      4.9307346
+    ],
+    "osm_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus_v4/amsterdam/amsterdam.osm",
+    "net_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus_v4/amsterdam/amsterdam.net.xml",
+    "query_file": "/users/sriramv/sumo_traffic_project/generated_map_corpus_v4/amsterdam/amsterdam.overpassql",
+    "overpass_endpoint": "https://overpass-api.de/api/interpreter",
+    "osm_traffic_signal_nodes": 112,
+    "sumo_tl_logic_count": 52,
+    "usable_variable_phase_tls_count": 34,
+    "max_stable_phase_candidates": 10
+  },
+  "simulation_backend": "libsumo 1.26.0",
+  "unique_heldout_simulations": 5040,
+  "paired_comparison_rows": 11520,
+  "baseline_reuse": "Native SUMO, MaxPressure, and schema v3 are sensor-independent and run once per map/rate/seed. Their exact rows are reused in each sensor comparison.",
+  "primary_sensor_condition": "loops",
+  "primary_metric": "total_arrived",
+  "secondary_metrics": [
+    "mean_avg_speed_mps",
+    "mean_global_queue",
+    "max_global_queue",
+    "mean_global_wait",
+    "max_global_wait",
+    "recovered_total"
+  ],
+  "selected_checkpoint": "/users/sriramv/sumo_traffic_project/models/detector_realistic_multiagent_v4_best.zip",
+  "selection_rule": "Archived best selected on validation before testing; do not select again on test outcomes.",
+  "scope": "Ordinary traffic. No ambulance travel-time or collision-safety claim.",
+  "v4_spillback_starvation_metrics": "Unavailable: original collector reads the schema-v3 adapter key."
+}

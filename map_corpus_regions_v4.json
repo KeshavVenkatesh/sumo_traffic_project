@@ -1,0 +1,63 @@
+{
+  "protocol": {
+    "corpus_id": "detector_realistic_v4_new_maps_20260817",
+    "seed": 20260817,
+    "old_schema_v3_config": "map_corpus_regions.json",
+    "old_schema_v3_seed": 20260712,
+    "minimum_test_center_distance_km": 75.0,
+    "expected_split_counts": {
+      "train": 32,
+      "validation": 8,
+      "test": 8
+    },
+    "policy": "The test split is frozen before training and is excluded from both schema-v4 development and every region in the historical schema-v3 corpus plan."
+  },
+  "regions": [
+    {"name": "los_angeles", "center": [34.0522, -118.2437], "jitter": [0.014, 0.018], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 2, "split": "train"},
+    {"name": "long_beach", "center": [33.7701, -118.1937], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "riverside", "center": [33.9806, -117.3755], "jitter": [0.012, 0.016], "half_size": [0.019, 0.023], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "san_antonio", "center": [29.4241, -98.4936], "jitter": [0.012, 0.016], "half_size": [0.019, 0.023], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "dallas", "center": [32.7767, -96.7970], "jitter": [0.014, 0.018], "half_size": [0.019, 0.023], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "houston", "center": [29.7604, -95.3698], "jitter": [0.016, 0.020], "half_size": [0.019, 0.023], "half_size_jitter": 0.20, "subareas": 2, "split": "train"},
+    {"name": "new_orleans", "center": [29.9511, -90.0715], "jitter": [0.012, 0.016], "half_size": [0.017, 0.021], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "miami", "center": [25.7617, -80.1918], "jitter": [0.012, 0.016], "half_size": [0.017, 0.021], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "orlando", "center": [28.5383, -81.3792], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "tampa", "center": [27.9506, -82.4572], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "nashville", "center": [36.1627, -86.7816], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "raleigh", "center": [35.7796, -78.6382], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "washington_dc", "center": [38.9072, -77.0369], "jitter": [0.010, 0.014], "half_size": [0.016, 0.020], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "baltimore", "center": [39.2904, -76.6122], "jitter": [0.010, 0.014], "half_size": [0.017, 0.021], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "philadelphia", "center": [39.9526, -75.1652], "jitter": [0.012, 0.016], "half_size": [0.016, 0.020], "half_size_jitter": 0.20, "subareas": 2, "split": "train"},
+    {"name": "pittsburgh", "center": [40.4406, -79.9959], "jitter": [0.010, 0.014], "half_size": [0.017, 0.021], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "cleveland", "center": [41.4993, -81.6944], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "detroit", "center": [42.3314, -83.0458], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "columbus", "center": [39.9612, -82.9988], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "indianapolis", "center": [39.7684, -86.1581], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "milwaukee", "center": [43.0389, -87.9065], "jitter": [0.012, 0.016], "half_size": [0.017, 0.021], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "st_louis", "center": [38.6270, -90.1994], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "kansas_city", "center": [39.0997, -94.5786], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "omaha", "center": [41.2565, -95.9345], "jitter": [0.012, 0.016], "half_size": [0.018, 0.022], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "albuquerque", "center": [35.0844, -106.6504], "jitter": [0.012, 0.016], "half_size": [0.019, 0.023], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "tucson", "center": [32.2226, -110.9747], "jitter": [0.012, 0.016], "half_size": [0.019, 0.023], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+    {"name": "london", "center": [51.5074, -0.1278], "jitter": [0.012, 0.016], "half_size": [0.014, 0.018], "half_size_jitter": 0.20, "subareas": 2, "split": "train"},
+    {"name": "madrid", "center": [40.4168, -3.7038], "jitter": [0.010, 0.014], "half_size": [0.014, 0.018], "half_size_jitter": 0.20, "subareas": 1, "split": "train"},
+
+    {"name": "lisbon", "center": [38.7223, -9.1393], "jitter": [0.010, 0.014], "half_size": [0.014, 0.018], "half_size_jitter": 0.20, "subareas": 1, "split": "validation"},
+    {"name": "rome", "center": [41.9028, 12.4964], "jitter": [0.010, 0.014], "half_size": [0.014, 0.018], "half_size_jitter": 0.20, "subareas": 1, "split": "validation"},
+    {"name": "milan", "center": [45.4642, 9.1900], "jitter": [0.010, 0.014], "half_size": [0.014, 0.018], "half_size_jitter": 0.20, "subareas": 1, "split": "validation"},
+    {"name": "berlin", "center": [52.5200, 13.4050], "jitter": [0.010, 0.014], "half_size": [0.014, 0.018], "half_size_jitter": 0.20, "subareas": 1, "split": "validation"},
+    {"name": "amsterdam", "center": [52.3676, 4.9041], "jitter": [0.009, 0.012], "half_size": [0.013, 0.017], "half_size_jitter": 0.20, "subareas": 1, "split": "validation"},
+    {"name": "brussels", "center": [50.8503, 4.3517], "jitter": [0.009, 0.012], "half_size": [0.013, 0.017], "half_size_jitter": 0.20, "subareas": 1, "split": "validation"},
+    {"name": "vienna", "center": [48.2082, 16.3738], "jitter": [0.010, 0.014], "half_size": [0.014, 0.018], "half_size_jitter": 0.20, "subareas": 1, "split": "validation"},
+    {"name": "prague", "center": [50.0755, 14.4378], "jitter": [0.010, 0.014], "half_size": [0.014, 0.018], "half_size_jitter": 0.20, "subareas": 1, "split": "validation"},
+
+    {"name": "new_york", "center": [40.7128, -74.0060], "jitter": [0.009, 0.012], "half_size": [0.013, 0.017], "half_size_jitter": 0.15, "subareas": 1, "split": "test"},
+    {"name": "toronto", "center": [43.6532, -79.3832], "jitter": [0.010, 0.014], "half_size": [0.015, 0.019], "half_size_jitter": 0.15, "subareas": 1, "split": "test"},
+    {"name": "montreal", "center": [45.5019, -73.5674], "jitter": [0.010, 0.014], "half_size": [0.015, 0.019], "half_size_jitter": 0.15, "subareas": 1, "split": "test"},
+    {"name": "mexico_city", "center": [19.4326, -99.1332], "jitter": [0.010, 0.014], "half_size": [0.015, 0.019], "half_size_jitter": 0.15, "subareas": 1, "split": "test"},
+    {"name": "tokyo", "center": [35.6762, 139.6503], "jitter": [0.009, 0.012], "half_size": [0.013, 0.017], "half_size_jitter": 0.15, "subareas": 1, "split": "test"},
+    {"name": "singapore", "center": [1.3521, 103.8198], "jitter": [0.009, 0.012], "half_size": [0.013, 0.017], "half_size_jitter": 0.15, "subareas": 1, "split": "test"},
+    {"name": "sydney", "center": [-33.8688, 151.2093], "jitter": [0.010, 0.014], "half_size": [0.015, 0.019], "half_size_jitter": 0.15, "subareas": 1, "split": "test"},
+    {"name": "melbourne", "center": [-37.8136, 144.9631], "jitter": [0.010, 0.014], "half_size": [0.015, 0.019], "half_size_jitter": 0.15, "subareas": 1, "split": "test"}
+  ]
+}
