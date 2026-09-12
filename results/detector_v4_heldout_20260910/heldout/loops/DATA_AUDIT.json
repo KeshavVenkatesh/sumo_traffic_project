@@ -1,0 +1,10 @@
+{
+  "data_complete": true,
+  "expected_rows": 2880,
+  "rows": 2880,
+  "pairing_and_hashes_passed": true,
+  "invalid_action_issues": [],
+  "sensor_independent_baseline_reuse": null,
+  "performance_pass": "Not inferred from completion; inspect statistical_summary.csv.",
+  "v4_spillback_starvation": "Not measured correctly by the archived collector; do not use its zero values."
+}

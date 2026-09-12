@@ -1,0 +1,6 @@
+{
+  "started_at": 1789005455.3679488,
+  "backend": "libsumo 1.26.0",
+  "episode_seconds": 1200,
+  "workers": 10
+}

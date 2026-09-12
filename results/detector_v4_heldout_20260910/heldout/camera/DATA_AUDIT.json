@@ -1,0 +1,20 @@
+{
+  "data_complete": true,
+  "expected_rows": 2880,
+  "rows": 2880,
+  "pairing_and_hashes_passed": true,
+  "invalid_action_issues": [],
+  "sensor_independent_baseline_reuse": {
+    "source_campaign": "/users/sriramv/sumo_traffic_project/runs/detector_v4_extensive_test_fast/heldout/loops",
+    "controllers": [
+      "native_sumo",
+      "max_pressure",
+      "schema_v3"
+    ],
+    "rows": 2160,
+    "reason": "These controllers do not read detector sensor-profile or fault settings.",
+    "route_paths_rewritten_to_target_hardlinks": true
+  },
+  "performance_pass": "Not inferred from completion; inspect statistical_summary.csv.",
+  "v4_spillback_starvation": "Not measured correctly by the archived collector; do not use its zero values."
+}
